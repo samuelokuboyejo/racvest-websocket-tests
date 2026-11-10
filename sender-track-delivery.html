@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Racvest · Sender Track Delivery</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+  <link rel="stylesheet" href="shared/realtime-test.css" />
+  <script src="shared/realtime-test.js"></script>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <div class="logo-icon">R</div>
+      <div>Racvest <span>·</span> Track delivery<small>Watch the courier move and the delivery status change</small></div>
+    </div>
+    <div class="header-right">
+      <nav class="pages" id="pages"></nav>
+      <div class="status-pill" id="statusPill"><span class="dot"></span><span id="statusText">Disconnected</span></div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside>
+      <div>
+        <div class="section-label">Connection</div>
+        <div class="field">
+          <label>Realtime server URL</label>
+          <input id="serverUrl" data-save="serverUrl" type="text" placeholder="http://localhost:8090" />
+        </div>
+        <div class="field">
+          <label>Sender access token</label>
+          <textarea id="token" data-save="senderToken" placeholder="Token from logging in as the sender of this delivery"></textarea>
+        </div>
+        <div class="field">
+          <label>Delivery ID</label>
+          <input id="deliveryId" data-save="deliveryId" type="text" placeholder="uuid of the delivery to track" />
+          <div class="hint">Only the sender and the assigned courier of this delivery get its updates.</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="connectBtn">Connect &amp; track</button>
+          <button class="btn btn-danger" id="disconnectBtn" disabled>Disconnect</button>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div>
+        <div class="section-label">Subscribed to</div>
+        <div class="subscriptions" id="subs"><div style="color:var(--text3)">Nothing yet</div></div>
+      </div>
+
+      <div>
+        <div class="section-label">Options</div>
+        <label class="check" style="margin-bottom:8px"><input type="checkbox" id="follow" checked /> Keep the courier in view</label>
+        <label class="check"><input type="checkbox" id="showLocations" /> List every location update in the feed</label>
+      </div>
+
+      <div class="help">
+        <strong>To see movement:</strong> the delivery must be assigned to a courier.
+        Open <code>courier-publish-location.html</code> in another tab with that courier's token,
+        choose <strong>On a delivery</strong>, enter the same delivery ID and drive somewhere.
+      </div>
+      <button class="btn btn-small" id="clearSaved" style="align-self:flex-start">Clear saved settings</button>
+    </aside>
+
+    <section class="content">
+      <div class="stats-row">
+        <div class="stat"><div class="stat-value accent" id="eta">—</div><div class="stat-label">ETA to drop-off</div></div>
+        <div class="stat"><div class="stat-value" id="distance">—</div><div class="stat-label">Distance left</div></div>
+        <div class="stat"><div class="stat-value small" id="status">—</div><div class="stat-label">Status</div></div>
+        <div class="stat"><div class="stat-value" id="updates">0</div><div class="stat-label">Location updates</div></div>
+        <div class="stat"><div class="stat-value small" id="age">—</div><div class="stat-label">Last location</div></div>
+      </div>
+
+      <div class="two-col">
+        <div id="map" class="map tall"></div>
+        <div class="card">
+          <div class="card-title">Delivery progress <small>from /tracking</small></div>
+          <div class="timeline" id="timeline"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Events <small>newest first</small></div>
+        <div class="feed" id="feed"></div>
+      </div>
+    </section>
+  </main>
+
+  <div class="log-strip" id="logStrip"><span>SYS</span>Ready. Enter the sender token and delivery ID, then connect.</div>
+
+  <script>
+    const STEPS = [
+      ['ASSIGNED', 'Courier assigned'],
+      ['COURIER_EN_ROUTE_TO_PICKUP', 'Courier on the way to pickup'],
+      ['ARRIVED_AT_PICKUP', 'Courier at pickup'],
+      ['ITEM_PICKED_UP', 'Item picked up'],
+      ['IN_TRANSIT_TO_DESTINATION', 'On the way to drop-off'],
+      ['ARRIVED_AT_DESTINATION', 'Courier at drop-off'],
+      ['DELIVERED', 'Delivered'],
+    ];
+
+    const conn = new RT.Connection();
+    const feed = new RT.Feed('feed', { emptyHtml: 'Waiting for the courier to move or the status to change.' });
+    const stepTimes = {};
+    let currentStatus = null;
+    let lastLocationAt = null;
+    let updates = 0;
+
+    const map = RT.createMap('map', [6.5244, 3.3792], 13);
+    const courierMarker = L.marker([0, 0], { icon: RT.pinIcon('🏍️', '#00e5a0') });
+    const trail = L.polyline([], { color: '#00e5a0', weight: 3, opacity: 0.7 }).addTo(map);
+    const checkpoints = L.layerGroup().addTo(map);
+
+    function renderTimeline() {
+      const index = STEPS.findIndex(([key]) => key === currentStatus);
+      document.getElementById('timeline').innerHTML = STEPS.map(([key, label], i) => {
+        const state = i === index ? 'current' : i < index ? 'done' : '';
+        const at = stepTimes[key] ? `<small>${RT.time(stepTimes[key])}</small>` : '';
+        return `<div class="step ${state}"><div class="bullet"></div><div>${label}${at}<small>${key}</small></div></div>`;
+      }).join('');
+    }
+
+    function onLocation(body, channel) {
+      const lat = Number(body.latitude), lng = Number(body.longitude);
+      if (Number.isNaN(lat) || Number.isNaN(lng)) return;
+      updates++;
+      lastLocationAt = new Date();
+      courierMarker.setLatLng([lat, lng]).addTo(map);
+      trail.addLatLng([lat, lng]);
+      if (document.getElementById('follow').checked) map.panTo([lat, lng]);
+      document.getElementById('updates').textContent = updates;
+      document.getElementById('eta').textContent = body.etaText || (body.etaSeconds != null ? Math.round(body.etaSeconds / 60) + ' min' : '—');
+      document.getElementById('distance').textContent = body.distanceText || RT.formatDistance(body.distanceMeters);
+      if (updates === 1) RT.log('First courier location received.');
+      if (updates === 1 || document.getElementById('showLocations').checked) {
+        feed.add({
+          type: 'COURIER LOCATION', channel, body, tone: 'good',
+          summary: `<b>${lat.toFixed(5)}, ${lng.toFixed(5)}</b> · ETA ${RT.escapeHtml(body.etaText || '—')} · ${RT.escapeHtml(body.distanceText || '—')} left`,
+        });
+      }
+    }
+
+    function onTracking(body, channel) {
+      const event = body.payload || {};
+      const status = event.trackingStatus || body.type;
+      currentStatus = event.trackingStatus || currentStatus;
+      if (event.trackingStatus) stepTimes[event.trackingStatus] = new Date();
+      if (event.lat != null && event.lon != null) {
+        L.circleMarker([event.lat, event.lon], { radius: 7, color: '#f5a623', fillOpacity: 0.8 })
+          .bindTooltip(status).addTo(checkpoints);
+      }
+      document.getElementById('status').textContent = status || '—';
+      renderTimeline();
+      feed.add({
+        type: body.type || 'TRACKING', channel, body, tone: status === 'DELIVERED' ? 'good' : '',
+        summary: `Status is now <b>${RT.escapeHtml(status)}</b>${event.lat != null ? ` at ${Number(event.lat).toFixed(5)}, ${Number(event.lon).toFixed(5)}` : ''}`,
+      });
+      RT.log('Status changed to ' + status);
+    }
+
+    setInterval(() => {
+      if (!lastLocationAt) return;
+      const seconds = Math.round((Date.now() - lastLocationAt) / 1000);
+      document.getElementById('age').textContent = seconds < 60 ? `${seconds}s ago` : `${Math.round(seconds / 60)} min ago`;
+    }, 1000);
+
+    function setConnected(on, destinations = []) {
+      document.getElementById('connectBtn').disabled = on;
+      document.getElementById('disconnectBtn').disabled = !on;
+      document.getElementById('subs').innerHTML = on
+        ? destinations.map((d) => `<div>${RT.escapeHtml(d)}</div>`).join('')
+        : '<div style="color:var(--text3)">Nothing yet</div>';
+    }
+
+    document.getElementById('connectBtn').addEventListener('click', async () => {
+      const deliveryId = RT.value('deliveryId');
+      if (!RT.isUuid(deliveryId)) { RT.log('Enter the delivery ID (a uuid).', true); return; }
+      try {
+        await conn.connect(RT.value('serverUrl'), RT.value('token'));
+        const locationTopic = `/topic/delivery/${deliveryId}/courier-location`;
+        const trackingTopic = `/topic/delivery/${deliveryId}/tracking`;
+        conn.subscribe(locationTopic, onLocation);
+        conn.subscribe(trackingTopic, onTracking);
+        setConnected(true, [locationTopic, trackingTopic]);
+        RT.log('Tracking delivery ' + deliveryId);
+      } catch (e) {
+        RT.log(e.message, true);
+        setConnected(false);
+      }
+    });
+    document.getElementById('disconnectBtn').addEventListener('click', async () => { await conn.disconnect(); setConnected(false); });
+    conn.onDisconnect = () => setConnected(false);
+
+    renderTimeline();
+  </script>
+</body>
+</html>

@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Racvest · Courier All Events</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+  <link rel="stylesheet" href="shared/realtime-test.css" />
+  <script src="shared/realtime-test.js"></script>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <div class="logo-icon">R</div>
+      <div>Racvest <span>·</span> Courier events<small>Everything sent to a courier: requests, offers, accepted bids, price changes</small></div>
+    </div>
+    <div class="header-right">
+      <nav class="pages" id="pages"></nav>
+      <div class="status-pill" id="statusPill"><span class="dot"></span><span id="statusText">Disconnected</span></div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside>
+      <div>
+        <div class="section-label">Connection</div>
+        <div class="field">
+          <label>Realtime server URL</label>
+          <input id="serverUrl" data-save="serverUrl" type="text" placeholder="http://localhost:8090" />
+        </div>
+        <div class="field">
+          <label>Courier access token</label>
+          <textarea id="token" data-save="courierToken" placeholder="Token from logging in as a courier"></textarea>
+        </div>
+        <div class="field">
+          <label>Courier ID</label>
+          <input id="courierId" data-save="courierId" type="text" placeholder="user id of the courier" />
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="connectBtn">Connect</button>
+          <button class="btn btn-danger" id="disconnectBtn" disabled>Disconnect</button>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div>
+        <div class="section-label">Stay available</div>
+        <label class="check" style="margin-bottom:12px"><input type="checkbox" id="heartbeat" data-save="courierEventsHeartbeat" value="on" checked /> Send a heartbeat every 10 s from here</label>
+        <div class="row">
+          <div class="field"><label>Latitude</label><input id="lat" data-save="courierEventsLat" type="text" value="6.5244" /></div>
+          <div class="field"><label>Longitude</label><input id="lng" data-save="courierEventsLng" type="text" value="3.3792" /></div>
+        </div>
+        <div class="hint" style="font-family:var(--font-mono);font-size:10.5px;color:var(--text3);line-height:1.5">
+          Without a fresh location the courier is not available, so new requests skip them.
+          Turn this off if the courier-publish-location page is already sending for this courier.
+        </div>
+        <div class="stat" style="margin-top:12px"><div class="stat-value small" id="beatState">Off</div><div class="stat-label">Heartbeat</div></div>
+      </div>
+
+      <div>
+        <div class="section-label">Subscribed to</div>
+        <div class="subscriptions" id="subs"><div style="color:var(--text3)">Nothing yet</div></div>
+      </div>
+      <button class="btn btn-small" id="clearSaved" style="align-self:flex-start">Clear saved settings</button>
+    </aside>
+
+    <section class="content">
+      <div class="stats-row">
+        <div class="stat"><div class="stat-value accent" id="liveCount">0</div><div class="stat-label">New requests</div></div>
+        <div class="stat"><div class="stat-value" id="offerCount">0</div><div class="stat-label">Matched offers</div></div>
+        <div class="stat"><div class="stat-value" id="acceptedCount">0</div><div class="stat-label">Bids accepted</div></div>
+        <div class="stat"><div class="stat-value" id="priceCount">0</div><div class="stat-label">Price changes</div></div>
+        <div class="stat"><div class="stat-value" id="totalCount">0</div><div class="stat-label">All events</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Events <small>newest first · filter by type</small></div>
+        <div class="filters" id="filters" style="margin-bottom:12px"></div>
+        <div class="feed" id="feed"></div>
+      </div>
+    </section>
+  </main>
+
+  <div class="log-strip" id="logStrip"><span>SYS</span>Ready. Connect with a courier token and ID.</div>
+
+  <script>
+    const conn = new RT.Connection();
+    const feed = new RT.Feed('feed', { emptyHtml: 'No events yet.<br/>Create a delivery request as a sender and it should show up here.' });
+    const byType = {};
+    let total = 0;
+    let filter = null;
+    let beatTimer = null;
+
+    const COUNTERS = {
+      DELIVERY_LIVE: 'liveCount',
+      MATCHED_DELIVERY_OFFER: 'offerCount',
+      BID_ACCEPTED: 'acceptedCount',
+      BID_AUTO_ACCEPTED: 'acceptedCount',
+      SENDER_PRICE_UPDATED: 'priceCount',
+    };
+
+    function renderFilters() {
+      const chips = [`<span class="chip ${filter === null ? 'active' : ''}" data-type="">All<b>${total}</b></span>`]
+        .concat(Object.entries(byType).map(([type, n]) =>
+          `<span class="chip ${filter === type ? 'active' : ''}" data-type="${RT.escapeHtml(type)}">${RT.escapeHtml(type)}<b>${n}</b></span>`));
+      document.getElementById('filters').innerHTML = chips.join('');
+    }
+    document.getElementById('filters').addEventListener('click', (e) => {
+      const chip = e.target.closest('.chip');
+      if (!chip) return;
+      filter = chip.dataset.type || null;
+      feed.setFilter(filter ? (item) => item.type === filter : null);
+      renderFilters();
+    });
+
+    function onEvent(body, channel) {
+      const info = RT.describeEvent(body);
+      total++;
+      byType[info.type] = (byType[info.type] || 0) + 1;
+      const counter = COUNTERS[info.type];
+      if (counter) document.getElementById(counter).textContent = Number(document.getElementById(counter).textContent) + 1;
+      document.getElementById('totalCount').textContent = total;
+      feed.add({ ...info, channel, body });
+      renderFilters();
+      RT.log(`${info.type} received.`);
+    }
+
+    async function beat() {
+      const latitude = parseFloat(RT.value('lat')), longitude = parseFloat(RT.value('lng'));
+      if (Number.isNaN(latitude) || Number.isNaN(longitude)) { document.getElementById('beatState').textContent = 'Bad lat/lng'; return; }
+      try {
+        await conn.send('/app/location/heartbeat', { latitude, longitude });
+        document.getElementById('beatState').textContent = 'Sent ' + RT.time(new Date());
+      } catch (e) {
+        document.getElementById('beatState').textContent = 'Failed';
+        RT.log('Heartbeat failed: ' + e.message, true);
+      }
+    }
+
+    function syncHeartbeat() {
+      clearInterval(beatTimer);
+      beatTimer = null;
+      if (conn.connected && document.getElementById('heartbeat').checked) {
+        beat();
+        beatTimer = setInterval(beat, 10000);
+      } else {
+        document.getElementById('beatState').textContent = 'Off';
+      }
+    }
+    document.getElementById('heartbeat').addEventListener('change', syncHeartbeat);
+
+    function setConnected(on, topic) {
+      document.getElementById('connectBtn').disabled = on;
+      document.getElementById('disconnectBtn').disabled = !on;
+      document.getElementById('subs').innerHTML = on
+        ? `<div>${RT.escapeHtml(topic)}</div>`
+        : '<div style="color:var(--text3)">Nothing yet</div>';
+      syncHeartbeat();
+    }
+
+    document.getElementById('connectBtn').addEventListener('click', async () => {
+      const courierId = RT.value('courierId');
+      if (!RT.isUuid(courierId)) { RT.log('Enter the courier ID (a uuid).', true); return; }
+      try {
+        await conn.connect(RT.value('serverUrl'), RT.value('token'));
+        const topic = `/topic/courier/${courierId}`;
+        conn.subscribe(topic, onEvent);
+        setConnected(true, topic);
+        RT.log(`Listening on ${topic}.`);
+      } catch (e) {
+        RT.log(e.message, true);
+        setConnected(false);
+      }
+    });
+    document.getElementById('disconnectBtn').addEventListener('click', async () => { await conn.disconnect(); setConnected(false); });
+    conn.onDisconnect = () => setConnected(false);
+
+    renderFilters();
+  </script>
+</body>
+</html>

@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Racvest · Courier Publish Location</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+  <link rel="stylesheet" href="shared/realtime-test.css" />
+  <script src="shared/realtime-test.js"></script>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <div class="logo-icon">R</div>
+      <div>Racvest <span>·</span> Courier location<small>Publish heartbeats or live delivery locations</small></div>
+    </div>
+    <div class="header-right">
+      <nav class="pages" id="pages"></nav>
+      <div class="status-pill" id="statusPill"><span class="dot"></span><span id="statusText">Disconnected</span></div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside>
+      <div>
+        <div class="section-label">Connection</div>
+        <div class="field">
+          <label>Realtime server URL</label>
+          <input id="serverUrl" data-save="serverUrl" type="text" placeholder="http://localhost:8090" />
+        </div>
+        <div class="field">
+          <label>Courier access token</label>
+          <textarea id="token" data-save="courierToken" placeholder="Token from logging in as a courier"></textarea>
+          <div class="hint">The token's active role must be COURIER.</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="connectBtn">Connect</button>
+          <button class="btn btn-danger" id="disconnectBtn" disabled>Disconnect</button>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div>
+        <div class="section-label">What to publish</div>
+        <div class="choice">
+          <label>
+            <input type="radio" name="mode" value="heartbeat" data-save="courierLocationMode" checked />
+            <div>Available (heartbeat)<small>/app/location/heartbeat · courier is free, no active delivery. Keeps them in nearby searches and delivery broadcasts.</small></div>
+          </label>
+          <label>
+            <input type="radio" name="mode" value="update" data-save="courierLocationMode" />
+            <div>On a delivery (live tracking)<small>/app/location/update · courier has an assigned delivery. The sender sees them move.</small></div>
+          </label>
+        </div>
+        <div class="field" id="deliveryField" style="margin-top:12px">
+          <label>Delivery ID</label>
+          <input id="deliveryId" data-save="deliveryId" type="text" placeholder="uuid of the delivery assigned to this courier" />
+        </div>
+        <div class="field">
+          <label>Send every (seconds)</label>
+          <input id="interval" type="number" min="1" max="60" value="10" />
+          <div class="hint" id="intervalHint">The app sends a heartbeat every 10–15 s. Locations older than 30 s stop counting.</div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div>
+        <div class="section-label">Where the courier is</div>
+        <div class="row">
+          <div class="field"><label>Latitude</label><input id="lat" type="text" value="6.5244" /></div>
+          <div class="field"><label>Longitude</label><input id="lng" type="text" value="3.3792" /></div>
+        </div>
+        <div class="help" style="margin-bottom:12px">
+          <strong>Click the map</strong> or drag the pin to move the courier. To simulate driving, press
+          <strong>Pick destination</strong>, click the map, then <strong>Drive</strong>.
+        </div>
+        <div class="field">
+          <label>Driving speed (km/h)</label>
+          <input id="speed" data-save="courierSpeed" type="number" min="1" max="200" value="35" />
+        </div>
+        <div class="btn-row" style="margin-bottom:10px">
+          <button class="btn" id="pickDestBtn">Pick destination</button>
+          <button class="btn" id="driveBtn" disabled>Drive</button>
+        </div>
+        <label class="check"><input type="checkbox" id="useGps" /> Use this computer's location instead</label>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="startBtn" disabled>Start publishing</button>
+        <button class="btn" id="onceBtn" disabled>Send once</button>
+      </div>
+      <button class="btn btn-small" id="clearSaved" style="align-self:flex-start">Clear saved settings</button>
+    </aside>
+
+    <section class="content">
+      <div class="stats-row">
+        <div class="stat"><div class="stat-value accent" id="sentCount">0</div><div class="stat-label">Sent</div></div>
+        <div class="stat"><div class="stat-value" id="ackCount">0</div><div class="stat-label">Confirmed by server</div></div>
+        <div class="stat"><div class="stat-value" id="failCount">0</div><div class="stat-label">Failed</div></div>
+        <div class="stat"><div class="stat-value small" id="lastSent">—</div><div class="stat-label">Last sent</div></div>
+        <div class="stat"><div class="stat-value small" id="driveState">Parked</div><div class="stat-label">Movement</div></div>
+      </div>
+
+      <div id="map" class="map tall"></div>
+
+      <div class="card">
+        <div class="card-title">Sent locations <small>newest first · "confirmed" means the realtime service replied with a STOMP receipt</small></div>
+        <div class="feed" id="feed"></div>
+      </div>
+    </section>
+  </main>
+
+  <div class="log-strip" id="logStrip"><span>SYS</span>Ready. Connect with a courier token, then start publishing.</div>
+
+  <script>
+    const conn = new RT.Connection();
+    const feed = new RT.Feed('feed', { max: 60, emptyHtml: 'Nothing sent yet.<br/>Connect, then press <b>Start publishing</b>.' });
+
+    let position = { lat: 6.5244, lng: 3.3792 };
+    let destination = null;
+    let pickingDestination = false;
+    let driving = false;
+    let publishTimer = null;
+    let driveTimer = null;
+    let gpsWatch = null;
+    let sent = 0, acked = 0, failed = 0;
+
+    // ── Map ────────────────────────────────────────────────────────────────
+    const map = RT.createMap('map', [position.lat, position.lng], 14);
+    const courierMarker = L.marker([position.lat, position.lng], { draggable: true, icon: RT.pinIcon('🏍️', '#00e5a0') }).addTo(map);
+    const destMarker = L.marker([0, 0], { icon: RT.pinIcon('🏁', '#f5a623') });
+    const route = L.polyline([], { color: '#f5a623', dashArray: '6 8', weight: 2 }).addTo(map);
+    const trail = L.polyline([], { color: '#00e5a0', weight: 3, opacity: 0.6 }).addTo(map);
+
+    function setPosition(point, { pan = false } = {}) {
+      position = { lat: Number(point.lat), lng: Number(point.lng) };
+      courierMarker.setLatLng([position.lat, position.lng]);
+      document.getElementById('lat').value = position.lat.toFixed(6);
+      document.getElementById('lng').value = position.lng.toFixed(6);
+      if (destination) route.setLatLngs([[position.lat, position.lng], [destination.lat, destination.lng]]);
+      if (pan) map.panTo([position.lat, position.lng]);
+      RT.store.set('courierLastPosition', JSON.stringify(position));
+    }
+
+    map.on('click', (e) => {
+      if (pickingDestination) {
+        destination = { lat: e.latlng.lat, lng: e.latlng.lng };
+        destMarker.setLatLng(e.latlng).addTo(map);
+        route.setLatLngs([[position.lat, position.lng], [destination.lat, destination.lng]]);
+        pickingDestination = false;
+        document.getElementById('pickDestBtn').textContent = 'Change destination';
+        document.getElementById('driveBtn').disabled = false;
+        RT.log(`Destination set ${RT.formatDistance(RT.distanceMeters(position, destination))} away. Press Drive.`);
+        return;
+      }
+      if (gpsWatch !== null) { RT.log('Turn off "Use this computer\'s location" to place the courier by hand.', true); return; }
+      setPosition(e.latlng);
+    });
+    courierMarker.on('dragend', () => setPosition(courierMarker.getLatLng()));
+
+    ['lat', 'lng'].forEach((id) => document.getElementById(id).addEventListener('change', () => {
+      const lat = parseFloat(RT.value('lat')), lng = parseFloat(RT.value('lng'));
+      if (Number.isNaN(lat) || Number.isNaN(lng)) { RT.log('Latitude and longitude must be numbers.', true); return; }
+      setPosition({ lat, lng }, { pan: true });
+    }));
+
+    // ── Driving simulation ─────────────────────────────────────────────────
+    document.getElementById('pickDestBtn').addEventListener('click', () => {
+      pickingDestination = true;
+      RT.log('Click the map where the courier should drive to.');
+    });
+
+    document.getElementById('driveBtn').addEventListener('click', () => driving ? stopDriving() : startDriving());
+
+    function startDriving() {
+      if (!destination) return;
+      if (gpsWatch !== null) stopGps();
+      driving = true;
+      trail.setLatLngs([[position.lat, position.lng]]);
+      document.getElementById('driveBtn').textContent = 'Stop driving';
+      document.getElementById('driveState').textContent = 'Driving';
+      driveTimer = setInterval(() => {
+        const speed = Math.max(1, parseFloat(RT.value('speed')) || 35);
+        const next = RT.moveTowards(position, destination, speed / 3.6);
+        setPosition(next);
+        trail.addLatLng([next.lat, next.lng]);
+        const left = RT.distanceMeters(position, destination);
+        document.getElementById('driveState').textContent = left < 1 ? 'Arrived' : `${RT.formatDistance(left)} left`;
+        if (left < 1) { stopDriving(); RT.log('Arrived at the destination. Still publishing from here.'); }
+      }, 1000);
+    }
+
+    function stopDriving() {
+      driving = false;
+      clearInterval(driveTimer);
+      document.getElementById('driveBtn').textContent = 'Drive';
+      if (document.getElementById('driveState').textContent === 'Driving') document.getElementById('driveState').textContent = 'Parked';
+    }
+
+    // ── Browser GPS ────────────────────────────────────────────────────────
+    document.getElementById('useGps').addEventListener('change', (e) => e.target.checked ? startGps() : stopGps());
+
+    function startGps() {
+      if (!navigator.geolocation) { RT.log('This browser has no location access.', true); document.getElementById('useGps').checked = false; return; }
+      stopDriving();
+      gpsWatch = navigator.geolocation.watchPosition(
+        (p) => { setPosition({ lat: p.coords.latitude, lng: p.coords.longitude }, { pan: true }); document.getElementById('driveState').textContent = 'GPS'; },
+        (err) => { RT.log('Location access failed: ' + err.message, true); stopGps(); },
+        { enableHighAccuracy: true, maximumAge: 5000 },
+      );
+      RT.log('Using this computer\'s location.');
+    }
+
+    function stopGps() {
+      if (gpsWatch !== null) navigator.geolocation.clearWatch(gpsWatch);
+      gpsWatch = null;
+      document.getElementById('useGps').checked = false;
+      if (document.getElementById('driveState').textContent === 'GPS') document.getElementById('driveState').textContent = 'Parked';
+    }
+
+    // ── Mode ───────────────────────────────────────────────────────────────
+    function mode() {
+      return document.querySelector('input[name=mode]:checked').value;
+    }
+
+    function applyMode(resetInterval) {
+      const live = mode() === 'update';
+      document.getElementById('deliveryField').style.display = live ? '' : 'none';
+      document.getElementById('intervalHint').textContent = live
+        ? 'The app sends every 4 s during a delivery. The delivery must be assigned to this courier, or racvest ignores the location.'
+        : 'The app sends a heartbeat every 10–15 s. Locations older than 30 s stop counting.';
+      if (resetInterval) document.getElementById('interval').value = live ? 4 : 10;
+      if (publishTimer) restartTimer();
+    }
+    document.querySelectorAll('input[name=mode]').forEach((el) => el.addEventListener('change', () => applyMode(true)));
+    document.getElementById('interval').addEventListener('change', () => { if (publishTimer) restartTimer(); });
+
+    // ── Publishing ─────────────────────────────────────────────────────────
+    async function sendNow() {
+      if (!conn.connected) return;
+      const live = mode() === 'update';
+      const destinationPath = live ? '/app/location/update' : '/app/location/heartbeat';
+      const body = { latitude: Number(position.lat.toFixed(7)), longitude: Number(position.lng.toFixed(7)) };
+      if (live) {
+        const deliveryId = RT.value('deliveryId');
+        if (!RT.isUuid(deliveryId)) { RT.log('Live tracking needs the delivery ID (a uuid).', true); stopPublishing(); return; }
+        body.deliveryId = deliveryId;
+      }
+      sent++;
+      document.getElementById('sentCount').textContent = sent;
+      document.getElementById('lastSent').textContent = RT.time(new Date());
+      const entry = {
+        type: live ? 'LOCATION UPDATE' : 'HEARTBEAT', channel: destinationPath, body,
+        summary: `<b>${body.latitude.toFixed(5)}, ${body.longitude.toFixed(5)}</b>${live ? ' · delivery ' + RT.escapeHtml(body.deliveryId.slice(0, 8)) + '…' : ''} · waiting for receipt…`,
+        tone: 'warn',
+      };
+      feed.add(entry);
+      try {
+        await conn.send(destinationPath, body);
+        acked++;
+        entry.tone = 'good';
+        entry.summary = entry.summary.replace('waiting for receipt…', 'confirmed by server');
+      } catch (e) {
+        failed++;
+        entry.tone = 'bad';
+        entry.summary = entry.summary.replace('waiting for receipt…', RT.escapeHtml(e.message));
+        RT.log('Send failed: ' + e.message, true);
+      }
+      document.getElementById('ackCount').textContent = acked;
+      document.getElementById('failCount').textContent = failed;
+      feed.render();
+    }
+
+    function restartTimer() {
+      clearInterval(publishTimer);
+      const seconds = Math.max(1, parseFloat(RT.value('interval')) || 10);
+      publishTimer = setInterval(sendNow, seconds * 1000);
+    }
+
+    function startPublishing() {
+      sendNow();
+      restartTimer();
+      document.getElementById('startBtn').textContent = 'Stop publishing';
+      RT.log(`Publishing every ${RT.value('interval')} s (${mode() === 'update' ? 'live tracking' : 'heartbeat'}).`);
+    }
+
+    function stopPublishing() {
+      clearInterval(publishTimer);
+      publishTimer = null;
+      document.getElementById('startBtn').textContent = 'Start publishing';
+    }
+
+    document.getElementById('startBtn').addEventListener('click', () => publishTimer ? (stopPublishing(), RT.log('Stopped publishing.')) : startPublishing());
+    document.getElementById('onceBtn').addEventListener('click', sendNow);
+
+    // ── Connection ─────────────────────────────────────────────────────────
+    function setConnected(on) {
+      document.getElementById('connectBtn').disabled = on;
+      document.getElementById('disconnectBtn').disabled = !on;
+      document.getElementById('startBtn').disabled = !on;
+      document.getElementById('onceBtn').disabled = !on;
+      if (!on) stopPublishing();
+    }
+
+    document.getElementById('connectBtn').addEventListener('click', async () => {
+      try {
+        await conn.connect(RT.value('serverUrl'), RT.value('token'));
+        setConnected(true);
+        RT.log('Connected. Press Start publishing.');
+      } catch (e) {
+        RT.log(e.message, true);
+        setConnected(false);
+      }
+    });
+    document.getElementById('disconnectBtn').addEventListener('click', async () => { await conn.disconnect(); setConnected(false); });
+    conn.onDisconnect = () => setConnected(false);
+
+    document.addEventListener('DOMContentLoaded', () => {
+      try {
+        const saved = JSON.parse(RT.store.get('courierLastPosition') || 'null');
+        if (saved && !Number.isNaN(saved.lat)) setPosition(saved, { pan: true });
+      } catch (e) { /* ignore */ }
+      applyMode(false);
+    });
+  </script>
+</body>
+</html>

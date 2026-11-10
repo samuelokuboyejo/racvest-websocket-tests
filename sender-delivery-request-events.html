@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Racvest · Sender Request Events</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+  <link rel="stylesheet" href="shared/realtime-test.css" />
+  <script src="shared/realtime-test.js"></script>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <div class="logo-icon">R</div>
+      <div>Racvest <span>·</span> Delivery request events<small>Everything a sender listens to after creating a request</small></div>
+    </div>
+    <div class="header-right">
+      <nav class="pages" id="pages"></nav>
+      <div class="status-pill" id="statusPill"><span class="dot"></span><span id="statusText">Disconnected</span></div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside>
+      <div>
+        <div class="section-label">Connection</div>
+        <div class="field">
+          <label>Realtime server URL</label>
+          <input id="serverUrl" data-save="serverUrl" type="text" placeholder="http://localhost:8090" />
+        </div>
+        <div class="field">
+          <label>Sender access token</label>
+          <textarea id="token" data-save="senderToken" placeholder="Token from logging in as a sender"></textarea>
+        </div>
+        <div class="field">
+          <label>Sender ID</label>
+          <input id="senderId" data-save="senderId" type="text" placeholder="user id of the sender" />
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="connectBtn">Connect</button>
+          <button class="btn btn-danger" id="disconnectBtn" disabled>Disconnect</button>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div>
+        <div class="section-label">Delivery request</div>
+        <div class="field">
+          <label>Delivery ID</label>
+          <input id="deliveryId" data-save="deliveryId" type="text" placeholder="uuid returned by POST /sender/deliveries" />
+          <div class="hint">Create the request (Postman or the app), paste its ID here, then press Watch. You can switch to another delivery at any time.</div>
+        </div>
+        <button class="btn" id="watchBtn" disabled style="width:100%">Watch this delivery</button>
+      </div>
+
+      <div>
+        <div class="section-label">Subscribed to</div>
+        <div class="subscriptions" id="subs"><div style="color:var(--text3)">Nothing yet</div></div>
+      </div>
+
+      <div class="help">
+        <strong>/topic/sender/{id}</strong> payments, bid price changes, traveller answers<br/>
+        <strong>…/bids</strong> new bids (BID_PLACED)<br/>
+        <strong>…/viewers</strong> couriers looking at the request<br/>
+        <strong>…/auto-accept</strong> a bid accepted for you<br/>
+        <strong>…/tracking</strong> status after a courier is assigned
+      </div>
+      <button class="btn btn-small" id="clearSaved" style="align-self:flex-start">Clear saved settings</button>
+    </aside>
+
+    <section class="content">
+      <div class="stats-row">
+        <div class="stat"><div class="stat-value accent" id="bidCount">0</div><div class="stat-label">Bids</div></div>
+        <div class="stat"><div class="stat-value" id="lowestBid">—</div><div class="stat-label">Lowest bid</div></div>
+        <div class="stat"><div class="stat-value" id="viewerCount">0</div><div class="stat-label">Viewing now</div></div>
+        <div class="stat"><div class="stat-value small" id="trackingStatus">—</div><div class="stat-label">Tracking status</div></div>
+        <div class="stat"><div class="stat-value" id="eventCount">0</div><div class="stat-label">All events</div></div>
+      </div>
+
+      <div class="two-col">
+        <div class="card">
+          <div class="card-title">Bids <small>lowest first</small></div>
+          <div class="list" id="bids"><div class="feed-empty">No bids yet.</div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Couriers viewing <small id="viewersAt">replaced on every update</small></div>
+          <div class="list" id="viewers"><div class="feed-empty">Nobody is looking at this request.</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Events <small>newest first</small></div>
+        <div class="filters" id="filters" style="margin-bottom:12px"></div>
+        <div class="feed" id="feed"></div>
+      </div>
+    </section>
+  </main>
+
+  <div class="log-strip" id="logStrip"><span>SYS</span>Ready. Connect with a sender token.</div>
+
+  <script>
+    const CHANNELS = [
+      ['all', 'All'],
+      ['sender', 'Sender'],
+      ['bids', 'Bids'],
+      ['viewers', 'Viewers'],
+      ['auto-accept', 'Auto-accept'],
+      ['tracking', 'Tracking'],
+    ];
+    const conn = new RT.Connection();
+    const feed = new RT.Feed('feed', { emptyHtml: 'No events yet.<br/>Create a delivery request and watch it here.' });
+    const counts = {};
+    let filter = 'all';
+    let bids = [];
+    let total = 0;
+    let watching = null;
+
+    function renderFilters() {
+      document.getElementById('filters').innerHTML = CHANNELS.map(([key, label]) => {
+        const n = key === 'all' ? total : counts[key] || 0;
+        return `<span class="chip ${filter === key ? 'active' : ''}" data-key="${key}">${label}<b>${n}</b></span>`;
+      }).join('');
+    }
+    document.getElementById('filters').addEventListener('click', (e) => {
+      const chip = e.target.closest('.chip');
+      if (!chip) return;
+      filter = chip.dataset.key;
+      feed.setFilter(filter === 'all' ? null : (item) => item.group === filter);
+      renderFilters();
+    });
+
+    function record(group, body, channel) {
+      total++;
+      counts[group] = (counts[group] || 0) + 1;
+      const info = RT.describeEvent(body);
+      feed.add({ ...info, group, channel, body });
+      document.getElementById('eventCount').textContent = total;
+      renderFilters();
+      return info;
+    }
+
+    function onBid(body, channel) {
+      record('bids', body, channel);
+      const p = body.payload || {};
+      const bid = p.bid || p;
+      if (body.type === 'BID_PLACED' && bid) bids.push({ ...bid, at: new Date() });
+      renderBids();
+    }
+
+    function renderBids() {
+      const sorted = [...bids].sort((a, b) => Number(a.offeredPrice) - Number(b.offeredPrice));
+      document.getElementById('bidCount').textContent = bids.length;
+      document.getElementById('lowestBid').textContent = sorted.length ? RT.money(sorted[0].offeredPrice) : '—';
+      document.getElementById('bids').innerHTML = sorted.length
+        ? sorted.map((bid) => `
+            <div class="list-item">
+              ${bid.imageUrl ? `<img class="avatar" src="${RT.escapeHtml(bid.imageUrl)}" alt="" />` : '<span class="avatar"></span>'}
+              <span class="grow">${RT.escapeHtml(bid.name || 'Unknown')}<br/>
+                <span class="mono">${RT.escapeHtml(bid.role || 'COURIER')} · ETA ${bid.etaMinutes ?? '—'} min${bid.avgRating != null ? ' · ★ ' + Number(bid.avgRating).toFixed(1) : ''}</span></span>
+              <b>${RT.money(bid.offeredPrice)}</b>
+            </div>`).join('')
+        : '<div class="feed-empty">No bids yet.</div>';
+    }
+
+    function onViewers(body, channel) {
+      record('viewers', body, channel);
+      const p = body.payload || {};
+      const viewers = p.viewers || [];
+      document.getElementById('viewerCount').textContent = p.viewerCount ?? viewers.length;
+      document.getElementById('viewersAt').textContent = 'updated ' + RT.time(new Date());
+      document.getElementById('viewers').innerHTML = viewers.length
+        ? viewers.map((v) => `
+            <div class="list-item">
+              ${v.imageUrl ? `<img class="avatar" src="${RT.escapeHtml(v.imageUrl)}" alt="" />` : '<span class="avatar"></span>'}
+              <span class="grow mono">${RT.escapeHtml(v.courierId)}</span>
+            </div>`).join('')
+        : '<div class="feed-empty">Nobody is looking at this request.</div>';
+    }
+
+    function onTracking(body, channel) {
+      record('tracking', body, channel);
+      const status = (body.payload || {}).trackingStatus;
+      if (status) document.getElementById('trackingStatus').textContent = status;
+    }
+
+    function watchDelivery() {
+      const deliveryId = RT.value('deliveryId');
+      if (!RT.isUuid(deliveryId)) { RT.log('Enter the delivery ID (a uuid).', true); return; }
+      if (watching) {
+        ['bids', 'viewers', 'auto-accept', 'tracking'].forEach((s) => conn.unsubscribe(`/topic/delivery/${watching}/${s}`));
+      }
+      watching = deliveryId;
+      bids = [];
+      renderBids();
+      document.getElementById('viewerCount').textContent = 0;
+      document.getElementById('trackingStatus').textContent = '—';
+      conn.subscribe(`/topic/delivery/${deliveryId}/bids`, onBid);
+      conn.subscribe(`/topic/delivery/${deliveryId}/viewers`, onViewers);
+      conn.subscribe(`/topic/delivery/${deliveryId}/auto-accept`, (body, ch) => record('auto-accept', body, ch));
+      conn.subscribe(`/topic/delivery/${deliveryId}/tracking`, onTracking);
+      renderSubs();
+      RT.log('Watching delivery ' + deliveryId);
+    }
+
+    function renderSubs() {
+      const list = [...conn.subs.keys()];
+      document.getElementById('subs').innerHTML = list.length
+        ? list.map((d) => `<div>${RT.escapeHtml(d)}</div>`).join('')
+        : '<div style="color:var(--text3)">Nothing yet</div>';
+    }
+
+    function setConnected(on) {
+      document.getElementById('connectBtn').disabled = on;
+      document.getElementById('disconnectBtn').disabled = !on;
+      document.getElementById('watchBtn').disabled = !on;
+      if (!on) watching = null;
+      renderSubs();
+    }
+
+    document.getElementById('connectBtn').addEventListener('click', async () => {
+      const senderId = RT.value('senderId');
+      if (!RT.isUuid(senderId)) { RT.log('Enter the sender ID (a uuid).', true); return; }
+      try {
+        await conn.connect(RT.value('serverUrl'), RT.value('token'));
+        conn.subscribe(`/topic/sender/${senderId}`, (body, ch) => record('sender', body, ch));
+        setConnected(true);
+        if (RT.isUuid(RT.value('deliveryId'))) watchDelivery();
+        else RT.log('Connected. Paste a delivery ID and press Watch.');
+      } catch (e) {
+        RT.log(e.message, true);
+        setConnected(false);
+      }
+    });
+    document.getElementById('watchBtn').addEventListener('click', watchDelivery);
+    document.getElementById('disconnectBtn').addEventListener('click', async () => { await conn.disconnect(); setConnected(false); });
+    conn.onDisconnect = () => setConnected(false);
+
+    renderFilters();
+  </script>
+</body>
+</html>

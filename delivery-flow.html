@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Racvest · Delivery Flow</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+  <link rel="stylesheet" href="shared/realtime-test.css" />
+  <script src="shared/realtime-test.js"></script>
+  <style>
+    .page { position: relative; z-index: 1; flex: 1; display: flex; flex-direction: column; gap: 16px; padding: 18px 22px; min-width: 0; }
+    .shared-bar { display: grid; grid-template-columns: 1.2fr 1.4fr auto auto; gap: 12px; align-items: end; }
+    .shared-bar .field { margin-bottom: 0; }
+    @media (max-width: 1000px) { .shared-bar { grid-template-columns: 1fr; } }
+
+    .progress { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+    @media (max-width: 1000px) { .progress { grid-template-columns: repeat(2, 1fr); } }
+    .progress .p-step { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+    .progress .p-num { font-family: var(--font-mono); font-size: 10px; color: var(--text3); letter-spacing: 1px; }
+    .progress .p-name { font-size: 13px; font-weight: 700; color: var(--text2); margin-top: 2px; }
+    .progress .p-who { font-family: var(--font-mono); font-size: 10px; margin-top: 4px; }
+    .progress .p-who.courier { color: var(--accent); }
+    .progress .p-who.sender { color: #4da3ff; }
+    .progress .p-detail { font-family: var(--font-mono); font-size: 10.5px; color: var(--text3); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .progress .p-step.done { border-color: var(--accent); background: rgba(0, 229, 160, 0.07); }
+    .progress .p-step.done .p-name { color: var(--text); }
+    .progress .p-step.done .p-num::after { content: '  ✓'; color: var(--accent); }
+
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; min-height: 0; }
+    @media (max-width: 1100px) { .split { grid-template-columns: 1fr; } }
+
+    .side { --side: var(--accent); display: flex; flex-direction: column; gap: 12px; background: rgba(17, 19, 24, 0.92); border: 1px solid var(--border); border-top: 3px solid var(--side); border-radius: var(--radius); padding: 16px; min-width: 0; }
+    .side.sender { --side: #4da3ff; }
+    .side-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .side-title { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 800; }
+    .side-title .badge { width: 30px; height: 30px; border-radius: 8px; background: var(--side); color: var(--bg); display: flex; align-items: center; justify-content: center; font-size: 15px; }
+    .side .status-pill.connected { color: var(--side); border-color: var(--side); }
+    .side .status-pill.connected .dot { background: var(--side); box-shadow: 0 0 8px var(--side); }
+    .side .btn-primary { background: var(--side); border-color: var(--side); }
+    .side input:focus, .side textarea:focus, .side select:focus { border-color: var(--side); }
+    .side .row .field { margin-bottom: 0; }
+    .side textarea { min-height: 58px; }
+    .side .chip.active { background: var(--side); border-color: var(--side); }
+    .side .section-label { margin-bottom: 8px; }
+    .side .map { height: 260px; }
+    .side .stats-row { grid-template-columns: repeat(4, 1fr); }
+    .side .stat { padding: 8px 10px; }
+    .side .stat-value { font-size: 16px; }
+    .side .stat-value.small { font-size: 12px; }
+    .side .feed { max-height: 380px; overflow-y: auto; }
+    .side .list { max-height: 200px; overflow-y: auto; }
+    .side-log { font-family: var(--font-mono); font-size: 11px; color: var(--text2); min-height: 16px; word-break: break-word; }
+    .side-log.err { color: var(--danger); }
+    .box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
+    .inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .inline .field { margin-bottom: 0; flex: 1; min-width: 90px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <div class="logo-icon">R</div>
+      <div>Racvest <span>·</span> Delivery flow<small>Courier on the left, sender on the right. Follow one delivery from request to drop-off.</small></div>
+    </div>
+    <div class="header-right"><nav class="pages" id="pages"></nav></div>
+  </header>
+
+  <div class="page">
+    <div class="card shared-bar">
+      <div class="field">
+        <label>Realtime server URL</label>
+        <input id="serverUrl" data-save="serverUrl" type="text" placeholder="http://localhost:8090" />
+      </div>
+      <div class="field">
+        <label>Delivery ID <span style="color:var(--text3)">(filled in when the courier gets the request)</span></label>
+        <input id="deliveryId" data-save="deliveryId" type="text" placeholder="uuid of the delivery request" />
+      </div>
+      <div class="btn-row"><button class="btn" id="watchBtn">Watch this delivery</button></div>
+      <div class="btn-row"><button class="btn" id="connectBothBtn">Connect both</button></div>
+    </div>
+
+    <div class="progress" id="progress"></div>
+
+    <div class="split">
+      <section class="side courier" id="courierSide"></section>
+      <section class="side sender" id="senderSide"></section>
+    </div>
+
+    <div class="help">
+      <strong>How to run it:</strong> connect both sides; the courier starts sending heartbeats so they are available.
+      Create a delivery request as the sender (Postman or the app). The courier gets it and the delivery ID fills in by itself.
+      Bid as the courier, accept as the sender, then the courier switches to live tracking: pick a destination on the courier map
+      and press Drive, and the sender's map follows. Tokens and IDs are the ones the other pages save.
+      <button class="btn btn-small" id="clearSaved" style="margin-left:8px">Clear saved settings</button>
+    </div>
+  </div>
+
+  <div class="log-strip" id="logStrip"><span>SYS</span>Ready. Connect the courier on the left and the sender on the right.</div>
+
+  <script>
+    // ── Flow progress ────────────────────────────────────────────────────────
+    const STEPS = [
+      ['online', 'Courier online', 'courier', 'heartbeat confirmed'],
+      ['request', 'Request reaches courier', 'courier', 'DELIVERY_LIVE or offer'],
+      ['bid', 'Sender sees a bid', 'sender', 'BID_PLACED'],
+      ['accepted', 'Courier is accepted', 'courier', 'BID_ACCEPTED'],
+      ['moving', 'Sender sees courier move', 'sender', 'courier-location'],
+      ['status', 'Status updates', 'sender', 'TRACKING_UPDATE'],
+    ];
+    const progress = {};
+
+    function renderProgress() {
+      document.getElementById('progress').innerHTML = STEPS.map(([key, name, who, hint], i) => `
+        <div class="p-step ${progress[key] ? 'done' : ''}">
+          <div class="p-num">STEP ${i + 1}</div>
+          <div class="p-name">${name}</div>
+          <div class="p-who ${who}">${who}</div>
+          <div class="p-detail">${RT.escapeHtml(progress[key] || hint)}</div>
+        </div>`).join('');
+    }
+
+    function mark(step, detail) {
+      if (progress[step] === detail) return;
+      const first = !progress[step];
+      progress[step] = detail || 'done';
+      renderProgress();
+      if (first) RT.log(`Step done: ${STEPS.find(([k]) => k === step)[1]}${detail ? ' (' + detail + ')' : ''}`);
+    }
+
+    function resetProgress(keepOnline) {
+      Object.keys(progress).forEach((k) => { if (!(keepOnline && k === 'online')) delete progress[k]; });
+      renderProgress();
+    }
+
+    // ── Shared delivery ID ───────────────────────────────────────────────────
+    const watchedId = () => RT.value('deliveryId');
+
+    function setDelivery(deliveryId, reason) {
+      if (!RT.isUuid(deliveryId) || deliveryId === watchedId()) return;
+      document.getElementById('deliveryId').value = deliveryId;
+      RT.store.set('deliveryId', deliveryId);
+      RT.log(`Delivery ${deliveryId} ${reason}.`);
+      watchDelivery();
+    }
+
+    function watchDelivery() {
+      if (!RT.isUuid(watchedId())) { RT.log('Enter the delivery ID (a uuid).', true); return; }
+      resetProgress(true);
+      sides.sender.watch(watchedId());
+      sides.courier.onDeliveryChanged(watchedId());
+    }
+
+    function eventDeliveryId(body) {
+      const p = (body && body.payload) || {};
+      return body.deliveryId || p.deliveryId || (p.delivery && (p.delivery.deliveryId || p.delivery.id)) || null;
+    }
+
+    // ── Shared side behaviour ────────────────────────────────────────────────
+    class Side {
+      constructor(role, icon, title) {
+        this.role = role;
+        this.root = document.getElementById(role + 'Side');
+        this.root.innerHTML = this.template(icon, title);
+        this.el = {};
+        this.root.querySelectorAll('[data-el]').forEach((node) => (this.el[node.dataset.el] = node));
+        this.feed = new RT.Feed(this.el.feed, { max: 120, emptyHtml: `Nothing received by the ${role} yet.` });
+        this.conn = new RT.Connection({
+          onStatus: (state, text) => { this.el.pill.className = 'status-pill ' + (state || ''); this.el.pillText.textContent = text; },
+          onLog: (message, isError) => this.say(message, isError),
+        });
+        this.conn.onDisconnect = () => this.setConnected(false);
+        this.el.connect.addEventListener('click', () => this.connect());
+        this.el.disconnect.addEventListener('click', async () => { await this.conn.disconnect(); this.setConnected(false); });
+      }
+
+      header(icon, title) {
+        return `
+          <div class="side-head">
+            <div class="side-title"><span class="badge">${icon}</span>${title}</div>
+            <div class="status-pill" data-el="pill"><span class="dot"></span><span data-el="pillText">Disconnected</span></div>
+          </div>
+          <div class="field">
+            <label>${title} access token</label>
+            <textarea data-el="token" data-save="${this.role}Token" placeholder="Token from logging in as the ${this.role}"></textarea>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>${title} user ID</label>
+              <input data-el="myId" data-save="${this.role}Id" type="text" placeholder="user id in the token" />
+            </div>
+            <div class="btn-row" style="align-self:flex-end;flex:0 0 auto">
+              <button class="btn btn-primary" data-el="connect">Connect</button>
+              <button class="btn btn-danger" data-el="disconnect" disabled>Disconnect</button>
+            </div>
+          </div>
+          <div class="side-log" data-el="log"></div>`;
+      }
+
+      get myId() { return this.el.myId.value.trim(); }
+
+      say(message, isError = false) {
+        this.el.log.className = 'side-log' + (isError ? ' err' : '');
+        this.el.log.textContent = message;
+      }
+
+      async connect() {
+        if (this.conn.connected) return;
+        if (!RT.isUuid(this.myId)) { this.say(`Fill in the ${this.role}'s user ID first.`, true); return; }
+        try {
+          await this.conn.connect(RT.value('serverUrl'), this.el.token.value);
+          this.setConnected(true);
+          this.afterConnect();
+        } catch (e) {
+          this.say(e.message, true);
+          this.setConnected(false);
+        }
+      }
+
+      setConnected(on) {
+        this.el.connect.disabled = on;
+        this.el.disconnect.disabled = !on;
+        this.onConnectedChange(on);
+      }
+
+      record(body, channel, group) {
+        const info = RT.describeEvent(body);
+        this.feed.add({ ...info, channel, body, group });
+        return info;
+      }
+    }
+
+    // ── Courier (left) ───────────────────────────────────────────────────────
+    class CourierSide extends Side {
+      constructor() {
+        super('courier', '🏍️', 'Courier');
+        this.position = { lat: 6.5244, lng: 3.3792 };
+        this.destination = null;
+        this.picking = false;
+        this.sendTimer = null;
+        this.driveTimer = null;
+        this.counts = { requests: 0, beats: 0 };
+
+        this.map = RT.createMap(this.el.map, [this.position.lat, this.position.lng], 14);
+        this.marker = L.marker([this.position.lat, this.position.lng], { draggable: true, icon: RT.pinIcon('🏍️', '#00e5a0') }).addTo(this.map);
+        this.destMarker = L.marker([0, 0], { icon: RT.pinIcon('🏁', '#f5a623') });
+        this.route = L.polyline([], { color: '#f5a623', dashArray: '6 8', weight: 2 }).addTo(this.map);
+        this.map.on('click', (e) => this.onMapClick(e.latlng));
+        this.marker.on('dragend', () => this.setPosition(this.marker.getLatLng()));
+        try {
+          const saved = JSON.parse(RT.store.get('courierLastPosition') || 'null');
+          if (saved && !Number.isNaN(saved.lat)) this.setPosition(saved, true);
+        } catch (e) { /* ignore */ }
+
+        this.el.mode.addEventListener('change', () => this.applyMode(true));
+        this.el.sendToggle.addEventListener('click', () => (this.sendTimer ? this.stopSending() : this.startSending()));
+        this.el.pickDest.addEventListener('click', () => { this.picking = true; this.say('Click the courier map where they should drive to.'); });
+        this.el.drive.addEventListener('click', () => (this.driveTimer ? this.stopDriving() : this.startDriving()));
+        this.applyMode(true);
+      }
+
+      template(icon, title) {
+        return this.header(icon, title) + `
+          <div class="stats-row">
+            <div class="stat"><div class="stat-value" data-el="requests">0</div><div class="stat-label">Requests</div></div>
+            <div class="stat"><div class="stat-value" data-el="beats">0</div><div class="stat-label">Locations sent</div></div>
+            <div class="stat"><div class="stat-value small" data-el="lastBeat">—</div><div class="stat-label">Last sent</div></div>
+            <div class="stat"><div class="stat-value small" data-el="driveState">Parked</div><div class="stat-label">Movement</div></div>
+          </div>
+          <div class="box">
+            <div class="section-label">Location the courier sends</div>
+            <div class="inline" style="margin-bottom:10px">
+              <div class="field">
+                <select data-el="mode">
+                  <option value="heartbeat">Available · heartbeat (/app/location/heartbeat)</option>
+                  <option value="update">On the delivery · live tracking (/app/location/update)</option>
+                </select>
+              </div>
+              <div class="field" style="flex:0 0 90px"><input data-el="interval" type="number" min="1" max="60" value="10" title="seconds between sends" /></div>
+              <button class="btn btn-primary btn-small" data-el="sendToggle" disabled style="flex:0 0 auto;padding:9px 14px">Start sending</button>
+            </div>
+            <div data-el="map" class="map"></div>
+            <div class="inline" style="margin-top:10px">
+              <span class="peer" style="font-family:var(--font-mono);font-size:11px;color:var(--text2);flex:1" data-el="coords"></span>
+              <div class="field" style="flex:0 0 90px"><input data-el="speed" data-save="courierSpeed" type="number" min="1" max="200" value="35" title="km/h" /></div>
+              <button class="btn btn-small" data-el="pickDest" style="flex:0 0 auto">Pick destination</button>
+              <button class="btn btn-small" data-el="drive" disabled style="flex:0 0 auto">Drive</button>
+            </div>
+          </div>
+          <div>
+            <div class="section-label">Courier events · /topic/courier/{id}</div>
+            <div class="feed" data-el="feed"></div>
+          </div>`;
+      }
+
+      afterConnect() {
+        const topic = `/topic/courier/${this.myId}`;
+        this.conn.subscribe(topic, (body, ch) => this.onEvent(body, ch));
+        this.say(`Listening on ${topic}. Sending heartbeats so the courier is available.`);
+        this.startSending();
+      }
+
+      onConnectedChange(on) {
+        this.el.sendToggle.disabled = !on;
+        if (!on) this.stopSending();
+      }
+
+      onEvent(body, channel) {
+        const info = this.record(body, channel);
+        const deliveryId = eventDeliveryId(body);
+        if (info.type === 'DELIVERY_LIVE' || info.type === 'MATCHED_DELIVERY_OFFER') {
+          this.counts.requests++;
+          this.el.requests.textContent = this.counts.requests;
+          // Follow the newest request until the current one has a bid, so an old saved ID never gets in the way.
+          if (deliveryId && deliveryId !== watchedId() && !progress.bid && !progress.accepted) {
+            setDelivery(deliveryId, 'picked up from the courier\'s new request');
+          }
+          if (!deliveryId || deliveryId === watchedId()) mark('request', info.type);
+        }
+        if ((info.type === 'BID_ACCEPTED' || info.type === 'BID_AUTO_ACCEPTED') && (!deliveryId || deliveryId === watchedId())) {
+          mark('accepted', info.type);
+          if (this.el.mode.value !== 'update') {
+            this.el.mode.value = 'update';
+            this.applyMode(true);
+            this.say('Bid accepted: switched to live tracking for this delivery. Pick a destination and press Drive.');
+          }
+        }
+      }
+
+      onDeliveryChanged() {
+        if (this.el.mode.value === 'update') this.say('Live tracking now sends for delivery ' + watchedId());
+      }
+
+      // Location sending
+      applyMode(resetInterval) {
+        if (resetInterval) this.el.interval.value = this.el.mode.value === 'update' ? 4 : 10;
+        if (this.sendTimer) this.startSending();
+      }
+
+      async sendLocation() {
+        if (!this.conn.connected) return;
+        const live = this.el.mode.value === 'update';
+        const body = { latitude: Number(this.position.lat.toFixed(7)), longitude: Number(this.position.lng.toFixed(7)) };
+        if (live) {
+          if (!RT.isUuid(watchedId())) { this.say('Live tracking needs the delivery ID at the top.', true); return; }
+          body.deliveryId = watchedId();
+        }
+        try {
+          await this.conn.send(live ? '/app/location/update' : '/app/location/heartbeat', body);
+          this.counts.beats++;
+          this.el.beats.textContent = this.counts.beats;
+          this.el.lastBeat.textContent = RT.time(new Date());
+          mark('online', 'heartbeat confirmed ' + RT.time(new Date()));
+        } catch (e) {
+          this.say('Location send failed: ' + e.message, true);
+        }
+      }
+
+      startSending() {
+        clearInterval(this.sendTimer);
+        this.sendLocation();
+        this.sendTimer = setInterval(() => this.sendLocation(), Math.max(1, parseFloat(this.el.interval.value) || 10) * 1000);
+        this.el.sendToggle.textContent = 'Stop sending';
+      }
+
+      stopSending() {
+        clearInterval(this.sendTimer);
+        this.sendTimer = null;
+        this.el.sendToggle.textContent = 'Start sending';
+      }
+
+      // Map and driving
+      setPosition(point, pan = false) {
+        this.position = { lat: Number(point.lat), lng: Number(point.lng) };
+        this.marker.setLatLng([this.position.lat, this.position.lng]);
+        this.el.coords.textContent = `${this.position.lat.toFixed(5)}, ${this.position.lng.toFixed(5)}`;
+        if (this.destination) this.route.setLatLngs([[this.position.lat, this.position.lng], [this.destination.lat, this.destination.lng]]);
+        if (pan) this.map.panTo([this.position.lat, this.position.lng]);
+        RT.store.set('courierLastPosition', JSON.stringify(this.position));
+      }
+
+      onMapClick(latlng) {
+        if (this.picking) {
+          this.picking = false;
+          this.destination = { lat: latlng.lat, lng: latlng.lng };
+          this.destMarker.setLatLng(latlng).addTo(this.map);
+          this.route.setLatLngs([[this.position.lat, this.position.lng], [latlng.lat, latlng.lng]]);
+          this.el.drive.disabled = false;
+          this.say(`Destination ${RT.formatDistance(RT.distanceMeters(this.position, this.destination))} away. Press Drive.`);
+          return;
+        }
+        this.setPosition(latlng);
+      }
+
+      startDriving() {
+        if (!this.destination) return;
+        this.el.drive.textContent = 'Stop';
+        this.driveTimer = setInterval(() => {
+          const speed = Math.max(1, parseFloat(this.el.speed.value) || 35);
+          this.setPosition(RT.moveTowards(this.position, this.destination, speed / 3.6));
+          const left = RT.distanceMeters(this.position, this.destination);
+          this.el.driveState.textContent = left < 1 ? 'Arrived' : RT.formatDistance(left) + ' left';
+          if (left < 1) this.stopDriving();
+        }, 1000);
+      }
+
+      stopDriving() {
+        clearInterval(this.driveTimer);
+        this.driveTimer = null;
+        this.el.drive.textContent = 'Drive';
+        if (this.el.driveState.textContent.endsWith('left')) this.el.driveState.textContent = 'Parked';
+      }
+    }
+
+    // ── Sender (right) ───────────────────────────────────────────────────────
+    class SenderSide extends Side {
+      constructor() {
+        super('sender', '📦', 'Sender');
+        this.watching = null;
+        this.bids = [];
+        this.filter = 'all';
+        this.counts = {};
+        this.map = RT.createMap(this.el.map, [6.5244, 3.3792], 13);
+        this.courierMarker = L.marker([0, 0], { icon: RT.pinIcon('🏍️', '#00e5a0') });
+        this.trail = L.polyline([], { color: '#4da3ff', weight: 3, opacity: 0.7 }).addTo(this.map);
+        this.el.filters.addEventListener('click', (e) => {
+          const chip = e.target.closest('.chip');
+          if (!chip) return;
+          this.filter = chip.dataset.key;
+          this.feed.setFilter(this.filter === 'all' ? null : (item) => item.group === this.filter);
+          this.renderFilters();
+        });
+        this.renderFilters();
+      }
+
+      template(icon, title) {
+        return this.header(icon, title) + `
+          <div class="stats-row">
+            <div class="stat"><div class="stat-value" data-el="bidCount">0</div><div class="stat-label">Bids</div></div>
+            <div class="stat"><div class="stat-value" data-el="viewers">0</div><div class="stat-label">Viewing</div></div>
+            <div class="stat"><div class="stat-value small" data-el="status">—</div><div class="stat-label">Status</div></div>
+            <div class="stat"><div class="stat-value small" data-el="eta">—</div><div class="stat-label">ETA</div></div>
+          </div>
+          <div class="box">
+            <div class="section-label">Courier on the sender's map · /courier-location</div>
+            <div data-el="map" class="map"></div>
+          </div>
+          <div class="box">
+            <div class="section-label">Bids · lowest first</div>
+            <div class="list" data-el="bids"><div class="feed-empty">No bids yet.</div></div>
+          </div>
+          <div>
+            <div class="section-label">Sender events</div>
+            <div class="filters" data-el="filters" style="margin-bottom:10px"></div>
+            <div class="feed" data-el="feed"></div>
+          </div>`;
+      }
+
+      afterConnect() {
+        this.conn.subscribe(`/topic/sender/${this.myId}`, (body, ch) => this.onEvent(body, ch, 'sender'));
+        if (RT.isUuid(watchedId())) this.watch(watchedId());
+        else this.say('Connected. Create a delivery request; it is watched as soon as the courier receives it.');
+      }
+
+      onConnectedChange(on) {
+        if (!on) this.watching = null;
+      }
+
+      watch(deliveryId) {
+        if (!this.conn.connected) return;
+        if (this.watching) {
+          ['bids', 'viewers', 'auto-accept', 'tracking', 'courier-location'].forEach((t) => this.conn.unsubscribe(`/topic/delivery/${this.watching}/${t}`));
+        }
+        this.watching = deliveryId;
+        this.bids = [];
+        this.renderBids();
+        this.trail.setLatLngs([]);
+        this.el.viewers.textContent = '0';
+        this.el.status.textContent = '—';
+        this.el.eta.textContent = '—';
+        const base = `/topic/delivery/${deliveryId}`;
+        this.conn.subscribe(`${base}/bids`, (b, ch) => this.onEvent(b, ch, 'bids'));
+        this.conn.subscribe(`${base}/viewers`, (b, ch) => this.onEvent(b, ch, 'viewers'));
+        this.conn.subscribe(`${base}/auto-accept`, (b, ch) => this.onEvent(b, ch, 'auto-accept'));
+        this.conn.subscribe(`${base}/tracking`, (b, ch) => this.onEvent(b, ch, 'tracking'));
+        this.conn.subscribe(`${base}/courier-location`, (b, ch) => this.onLocation(b, ch));
+        this.say('Watching delivery ' + deliveryId);
+      }
+
+      onEvent(body, channel, group) {
+        const info = this.record(body, channel, group);
+        this.counts[group] = (this.counts[group] || 0) + 1;
+        this.renderFilters();
+        const p = (body && body.payload) || {};
+        if (group === 'bids' && info.type === 'BID_PLACED') {
+          this.bids.push(p.bid || p);
+          this.renderBids();
+          mark('bid', `${this.bids.length} bid${this.bids.length === 1 ? '' : 's'}`);
+        }
+        if (group === 'viewers') this.el.viewers.textContent = p.viewerCount ?? (p.viewers || []).length;
+        if (group === 'auto-accept') mark('accepted', info.type);
+        if (group === 'tracking' && p.trackingStatus) {
+          this.el.status.textContent = p.trackingStatus;
+          mark('status', p.trackingStatus);
+        }
+      }
+
+      onLocation(body, channel) {
+        const lat = Number(body.latitude), lng = Number(body.longitude);
+        if (Number.isNaN(lat) || Number.isNaN(lng)) return;
+        this.courierMarker.setLatLng([lat, lng]).addTo(this.map);
+        this.trail.addLatLng([lat, lng]);
+        this.map.panTo([lat, lng]);
+        this.el.eta.textContent = body.etaText || (body.etaSeconds != null ? Math.round(body.etaSeconds / 60) + ' min' : '—');
+        if (!progress.moving) this.record(body, channel, 'tracking');
+        mark('moving', `${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+      }
+
+      renderBids() {
+        const sorted = [...this.bids].sort((a, b) => Number(a.offeredPrice) - Number(b.offeredPrice));
+        this.el.bidCount.textContent = this.bids.length;
+        this.el.bids.innerHTML = sorted.length
+          ? sorted.map((bid) => `
+              <div class="list-item">
+                <span class="grow">${RT.escapeHtml(bid.name || 'Unknown')}<br/>
+                  <span class="mono">${RT.escapeHtml(bid.role || 'COURIER')} · ETA ${bid.etaMinutes ?? '—'} min</span></span>
+                <b>${RT.money(bid.offeredPrice)}</b>
+              </div>`).join('')
+          : '<div class="feed-empty">No bids yet.</div>';
+      }
+
+      renderFilters() {
+        const groups = [['all', 'All'], ['sender', 'Sender'], ['bids', 'Bids'], ['viewers', 'Viewers'], ['auto-accept', 'Auto-accept'], ['tracking', 'Tracking']];
+        const total = Object.values(this.counts).reduce((a, b) => a + b, 0);
+        this.el.filters.innerHTML = groups.map(([key, label]) =>
+          `<span class="chip ${this.filter === key ? 'active' : ''}" data-key="${key}">${label}<b>${key === 'all' ? total : this.counts[key] || 0}</b></span>`).join('');
+      }
+    }
+
+    const sides = { courier: new CourierSide(), sender: new SenderSide() };
+    renderProgress();
+
+    document.getElementById('watchBtn').addEventListener('click', watchDelivery);
+    document.getElementById('deliveryId').addEventListener('change', () => { if (RT.isUuid(watchedId())) watchDelivery(); });
+    document.getElementById('connectBothBtn').addEventListener('click', async () => {
+      await sides.courier.connect();
+      await sides.sender.connect();
+    });
+  </script>
+</body>
+</html>

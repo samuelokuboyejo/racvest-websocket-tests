@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Racvest · Chat</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+  <link rel="stylesheet" href="shared/realtime-test.css" />
+  <script src="shared/realtime-test.js"></script>
+  <style>
+    .page { position: relative; z-index: 1; flex: 1; display: flex; flex-direction: column; gap: 16px; padding: 18px 22px; min-width: 0; }
+    .shared-bar { display: grid; grid-template-columns: 1.2fr 1fr 1fr auto; gap: 12px; align-items: end; }
+    .shared-bar .field { margin-bottom: 0; }
+    @media (max-width: 1000px) { .shared-bar { grid-template-columns: 1fr; } }
+
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; min-height: 0; }
+    @media (max-width: 1000px) { .split { grid-template-columns: 1fr; } }
+
+    .side { --side: var(--accent); display: flex; flex-direction: column; gap: 12px; background: rgba(17, 19, 24, 0.92); border: 1px solid var(--border); border-top: 3px solid var(--side); border-radius: var(--radius); padding: 16px; min-width: 0; }
+    .side.sender { --side: #4da3ff; }
+    .side-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .side-title { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 800; }
+    .side-title .badge { width: 30px; height: 30px; border-radius: 8px; background: var(--side); color: var(--bg); display: flex; align-items: center; justify-content: center; font-size: 15px; }
+    .side .status-pill.connected { color: var(--side); border-color: var(--side); }
+    .side .status-pill.connected .dot { background: var(--side); box-shadow: 0 0 8px var(--side); }
+    .side .btn-primary { background: var(--side); border-color: var(--side); }
+    .side input:focus, .side textarea:focus { border-color: var(--side); }
+    .side .row .field { margin-bottom: 0; }
+    .side textarea { min-height: 58px; }
+    .peer { font-family: var(--font-mono); font-size: 11px; color: var(--text2); word-break: break-all; }
+    .peer b { color: var(--text); font-weight: 500; }
+
+    .mini-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .mini-stats .stat { padding: 8px 10px; }
+    .mini-stats .stat-value { font-size: 16px; }
+
+    .chat { display: flex; flex-direction: column; height: 420px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+    .messages { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 9px; }
+    .bubble { max-width: 78%; padding: 9px 12px; border-radius: 14px; font-size: 14px; line-height: 1.45; background: var(--surface2); border: 1px solid var(--border2); align-self: flex-start; word-wrap: break-word; }
+    .bubble.mine { align-self: flex-end; background: color-mix(in srgb, var(--side) 14%, transparent); border-color: color-mix(in srgb, var(--side) 45%, transparent); }
+    .bubble.pending { opacity: 0.55; }
+    .bubble .meta { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; font-family: var(--font-mono); font-size: 10px; color: var(--text3); }
+    .bubble .ticks.read { color: var(--side); }
+    .bubble a { word-break: break-all; color: var(--side); }
+    .typing { height: 20px; padding: 0 14px; font-family: var(--font-mono); font-size: 11.5px; color: var(--side); }
+    .composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
+    .composer input { flex: 1; }
+    .composer .btn { flex: 0 0 auto; }
+
+    .frames { max-height: 260px; overflow-y: auto; }
+    .frames .event { padding: 8px 10px; }
+    .side-log { font-family: var(--font-mono); font-size: 11px; color: var(--text2); min-height: 16px; word-break: break-word; }
+    .side-log.err { color: var(--danger); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <div class="logo-icon">R</div>
+      <div>Racvest <span>·</span> Chat<small>Courier on the left, sender on the right. Each side has its own connection.</small></div>
+    </div>
+    <div class="header-right"><nav class="pages" id="pages"></nav></div>
+  </header>
+
+  <div class="page">
+    <div class="card shared-bar">
+      <div class="field">
+        <label>Realtime server URL</label>
+        <input id="serverUrl" data-save="serverUrl" type="text" placeholder="http://localhost:8090" />
+      </div>
+      <div class="field">
+        <label>Delivery ID</label>
+        <input id="deliveryId" data-save="deliveryId" type="text" placeholder="the delivery this chat is about" />
+      </div>
+      <div class="field">
+        <label>Conversation ID <span style="color:var(--text3)">(optional, filled from the first message)</span></label>
+        <input id="conversationId" data-save="conversationId" type="text" placeholder="needed for typing and conversation topics" />
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="connectBothBtn">Connect both</button>
+      </div>
+    </div>
+
+    <div class="split">
+      <section class="side courier" id="courierSide"></section>
+      <section class="side sender" id="senderSide"></section>
+    </div>
+
+    <div class="help">
+      The chat opens when the sender accepts the courier's bid. Messages go to realtime on <code>/app/send-message</code>,
+      racvest saves them and sends them back to <strong>both</strong> sides, so a message only counts as sent once it shows on both.
+      Tokens and IDs are the same ones the other pages save, so they fill in by themselves.
+      <button class="btn btn-small" id="clearSaved" style="margin-left:8px">Clear saved settings</button>
+    </div>
+  </div>
+
+  <div class="log-strip" id="logStrip"><span>SYS</span>Ready. Connect the courier on the left and the sender on the right.</div>
+
+  <script>
+    const ROLES = {
+      courier: { title: 'Courier', icon: '🏍️', other: 'sender' },
+      sender: { title: 'Sender', icon: '📦', other: 'courier' },
+    };
+
+    function sideTemplate(role) {
+      const r = ROLES[role];
+      return `
+        <div class="side-head">
+          <div class="side-title"><span class="badge">${r.icon}</span>${r.title}</div>
+          <div class="status-pill" data-el="pill"><span class="dot"></span><span data-el="pillText">Disconnected</span></div>
+        </div>
+        <div class="field">
+          <label>${r.title} access token</label>
+          <textarea data-el="token" data-save="${role}Token" placeholder="Token from logging in as the ${role}"></textarea>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>${r.title} user ID</label>
+            <input data-el="myId" data-save="${role}Id" type="text" placeholder="user id in the token" />
+          </div>
+          <div class="btn-row" style="align-self:flex-end;flex:0 0 auto">
+            <button class="btn btn-primary" data-el="connect">Connect</button>
+            <button class="btn btn-danger" data-el="disconnect" disabled>Disconnect</button>
+          </div>
+        </div>
+        <div class="peer" data-el="peer"></div>
+        <div class="mini-stats">
+          <div class="stat"><div class="stat-value" data-el="sent">0</div><div class="stat-label">Sent</div></div>
+          <div class="stat"><div class="stat-value" data-el="received">0</div><div class="stat-label">Received</div></div>
+          <div class="stat"><div class="stat-value" data-el="unread">—</div><div class="stat-label">Unread</div></div>
+        </div>
+        <div class="chat">
+          <div class="messages" data-el="messages"></div>
+          <div class="typing" data-el="typing"></div>
+          <form class="composer" data-el="composer">
+            <input data-el="text" type="text" placeholder="Message as the ${role}…" autocomplete="off" disabled />
+            <button class="btn btn-primary" data-el="send" type="submit" disabled>Send</button>
+          </form>
+        </div>
+        <div class="side-log" data-el="log"></div>
+        <details>
+          <summary class="section-label" style="cursor:pointer;margin:0">Frames received by the ${role} · <span data-el="frameCount">0</span></summary>
+          <div class="feed frames" data-el="frames" style="margin-top:10px"></div>
+        </details>`;
+    }
+
+    class ChatSide {
+      constructor(role) {
+        this.role = role;
+        this.root = document.getElementById(role + 'Side');
+        this.root.innerHTML = sideTemplate(role);
+        this.el = {};
+        this.root.querySelectorAll('[data-el]').forEach((node) => (this.el[node.dataset.el] = node));
+        this.messages = new Map();
+        this.pending = [];
+        this.readIds = new Set();
+        this.counts = { sent: 0, received: 0, frames: 0 };
+        this.typingSent = false;
+        this.conversationTopic = null;
+        this.frames = new RT.Feed(this.el.frames, { max: 60, emptyHtml: 'Nothing received yet.' });
+        this.conn = new RT.Connection({
+          onStatus: (state, text) => { this.el.pill.className = 'status-pill ' + (state || ''); this.el.pillText.textContent = text; },
+          onLog: (message, isError) => this.say(message, isError),
+        });
+        this.conn.onDisconnect = () => this.setConnected(false);
+        this.el.connect.addEventListener('click', () => this.connect());
+        this.el.disconnect.addEventListener('click', async () => { await this.conn.disconnect(); this.setConnected(false); });
+        this.el.composer.addEventListener('submit', (e) => { e.preventDefault(); this.send(); });
+        this.el.text.addEventListener('input', () => this.onTypingInput());
+        this.el.myId.addEventListener('input', () => { this.render(); sides[ROLES[role].other]?.showPeer(); });
+        this.render();
+      }
+
+      get myId() { return this.el.myId.value.trim(); }
+      get peer() { return sides[ROLES[this.role].other]; }
+
+      say(message, isError = false) {
+        this.el.log.className = 'side-log' + (isError ? ' err' : '');
+        this.el.log.textContent = message;
+      }
+
+      showPeer() {
+        const id = this.peer ? this.peer.myId : '';
+        this.el.peer.innerHTML = RT.isUuid(id)
+          ? `Chatting with the ${ROLES[this.role].other}: <b>${RT.escapeHtml(id)}</b>`
+          : `Fill in the ${ROLES[this.role].other}'s user ID on the other side to chat with them.`;
+      }
+
+      // ── Connection ───────────────────────────────────────────────────────
+      async connect() {
+        if (this.conn.connected) return;
+        if (!RT.isUuid(this.myId)) { this.say(`Fill in the ${this.role}'s user ID first.`, true); return; }
+        try {
+          await this.conn.connect(RT.value('serverUrl'), this.el.token.value);
+          const on = (dest, fn) => this.conn.subscribe(dest, (body, ch) => { this.frame(body, ch); fn.call(this, body); });
+          on('/user/queue/messages', this.onMessage);
+          on('/user/queue/delivered', this.onDelivered);
+          on('/user/queue/read-receipt', this.onRead);
+          on('/user/queue/read-single', this.onRead);
+          on('/user/queue/typing', this.onTyping);
+          on('/user/queue/chat-unread-count', this.onUnread);
+          this.setConnected(true);
+          if (RT.isUuid(RT.value('conversationId'))) this.followConversation(RT.value('conversationId'));
+          this.say('Connected. Type a message below.');
+        } catch (e) {
+          this.say(e.message, true);
+          this.setConnected(false);
+        }
+      }
+
+      setConnected(on) {
+        this.el.connect.disabled = on;
+        this.el.disconnect.disabled = !on;
+        this.el.text.disabled = !on;
+        this.el.send.disabled = !on;
+        if (!on) this.conversationTopic = null;
+      }
+
+      followConversation(conversationId) {
+        if (!this.conn.connected || !RT.isUuid(conversationId) || this.conversationTopic === conversationId) return;
+        if (this.conversationTopic) {
+          ['messages', 'typing', 'read-receipt'].forEach((t) => this.conn.unsubscribe(`/topic/${t}/${this.conversationTopic}`));
+        }
+        this.conversationTopic = conversationId;
+        const on = (dest, fn) => this.conn.subscribe(dest, (body, ch) => { this.frame(body, ch); fn.call(this, body); });
+        on(`/topic/messages/${conversationId}`, this.onMessage);
+        on(`/topic/typing/${conversationId}`, this.onTyping);
+        on(`/topic/read-receipt/${conversationId}`, this.onRead);
+      }
+
+      // ── Incoming ─────────────────────────────────────────────────────────
+      frame(body, channel) {
+        this.counts.frames++;
+        this.el.frameCount.textContent = this.counts.frames;
+        let summary = '';
+        if (body && body.content != null && !channel.includes('typing')) summary = `<b>${RT.escapeHtml(body.content)}</b>`;
+        else if (body && body.messageIds) summary = `${body.messageIds.length} message(s) read`;
+        else if (body && body.unreadCount != null) summary = `unread count is now <b>${body.unreadCount}</b>`;
+        else if (channel.includes('typing')) summary = isStopped(body) ? 'stopped typing' : 'typing';
+        this.frames.add({ type: (body && body.type) || channel.split('/').pop(), channel, body, summary, tone: channel.includes('messages') ? 'good' : '' });
+      }
+
+      onMessage(body) {
+        if (!body || !body.messageId) return;
+        if (body.conversationId) adoptConversation(body.conversationId);
+        const known = this.messages.has(body.messageId);
+        const mine = body.senderId === this.myId;
+        if (mine) {
+          const i = this.pending.findIndex((p) => p.content === body.content);
+          if (i >= 0) this.pending.splice(i, 1);
+        }
+        this.messages.set(body.messageId, { ...this.messages.get(body.messageId), ...body });
+        if (!known && !mine) {
+          this.counts.received++;
+          this.el.received.textContent = this.counts.received;
+          this.el.typing.textContent = '';
+        }
+        this.render();
+      }
+
+      onDelivered(body) {
+        if (!body || !body.messageId) return;
+        this.messages.set(body.messageId, { ...(this.messages.get(body.messageId) || body), delivered: true });
+        this.render();
+      }
+
+      onRead(body) {
+        if (!body) return;
+        (body.messageIds || []).forEach((id) => this.readIds.add(id));
+        if (body.messageId) this.readIds.add(body.messageId);
+        this.render();
+      }
+
+      onTyping(body) {
+        if (!body || body.senderId === this.myId) return;
+        const stopped = isStopped(body);
+        this.el.typing.textContent = stopped ? '' : `${ROLES[this.role].other} is typing…`;
+        clearTimeout(this.otherTypingTimer);
+        if (!stopped) this.otherTypingTimer = setTimeout(() => (this.el.typing.textContent = ''), 6000);
+      }
+
+      onUnread(body) {
+        if (body && body.unreadCount != null) this.el.unread.textContent = body.unreadCount;
+      }
+
+      // ── Sending ──────────────────────────────────────────────────────────
+      async send() {
+        const content = this.el.text.value.trim();
+        if (!content) return;
+        const receiverId = this.peer ? this.peer.myId : '';
+        if (!RT.isUuid(receiverId)) { this.say(`Fill in the ${ROLES[this.role].other}'s user ID on the other side first.`, true); return; }
+        const body = { receiverId, content };
+        if (RT.isUuid(RT.value('deliveryId'))) body.deliveryId = RT.value('deliveryId');
+        const bubble = { pending: true, content, sentAt: new Date().toISOString() };
+        this.pending.push(bubble);
+        this.el.text.value = '';
+        this.stopTyping();
+        this.render();
+        try {
+          await this.conn.send('/app/send-message', body);
+          this.counts.sent++;
+          this.el.sent.textContent = this.counts.sent;
+          this.say('Realtime accepted the message. Waiting for racvest to save it and send it back…');
+          setTimeout(() => {
+            if (this.pending.includes(bubble)) this.say('Racvest has not sent this message back yet. Is there a conversation between these two users?', true);
+            else this.say('Delivered.');
+          }, 6000);
+        } catch (e) {
+          this.pending.splice(this.pending.indexOf(bubble), 1);
+          this.render();
+          this.say('Send failed: ' + e.message, true);
+        }
+      }
+
+      sendTyping(typing) {
+        const conversationId = RT.value('conversationId');
+        if (!this.conn.connected || !RT.isUuid(conversationId)) return;
+        this.conn.send('/app/typing', { conversationId, typing }).catch(() => {});
+        this.typingSent = typing;
+      }
+
+      onTypingInput() {
+        if (!this.typingSent) this.sendTyping(true);
+        clearTimeout(this.typingTimer);
+        this.typingTimer = setTimeout(() => this.stopTyping(), 3000);
+      }
+
+      stopTyping() {
+        clearTimeout(this.typingTimer);
+        if (this.typingSent) this.sendTyping(false);
+      }
+
+      // ── Rendering ────────────────────────────────────────────────────────
+      render() {
+        this.showPeer();
+        const list = [...this.messages.values(), ...this.pending]
+          .sort((a, b) => new Date(a.timestamp || a.sentAt) - new Date(b.timestamp || b.sentAt));
+        if (!list.length) {
+          this.el.messages.innerHTML = `<div class="feed-empty">No messages yet.<br/>Connect and say hi as the ${this.role}.</div>`;
+          return;
+        }
+        this.el.messages.innerHTML = list.map((m) => {
+          const mine = m.pending || m.senderId === this.myId;
+          const read = m.isRead || this.readIds.has(m.messageId);
+          const attachment = m.metadata && m.metadata.url
+            ? `<div><a href="${RT.escapeHtml(m.metadata.url)}" target="_blank" rel="noopener">📎 ${RT.escapeHtml(m.metadata.name || m.metadata.url)}</a></div>` : '';
+          const ticks = mine ? `<span class="ticks ${read ? 'read' : ''}">${m.pending ? 'sending…' : read ? '✓✓ read' : m.delivered ? '✓✓' : '✓'}</span>` : '';
+          return `<div class="bubble ${mine ? 'mine' : ''} ${m.pending ? 'pending' : ''}">
+            ${RT.escapeHtml(m.content || '')}${attachment}
+            <div class="meta"><span>${RT.time(m.timestamp || m.sentAt)}</span>${ticks}</div>
+          </div>`;
+        }).join('');
+        this.el.messages.scrollTop = this.el.messages.scrollHeight;
+      }
+    }
+
+    function isStopped(body) {
+      return !!body && (body.typing === false || body.content === 'false' || body.content === false);
+    }
+
+    // The conversation ID is shared: once either side learns it, both follow its topics.
+    function adoptConversation(conversationId) {
+      if (!RT.isUuid(conversationId)) return;
+      if (RT.value('conversationId') !== conversationId) {
+        document.getElementById('conversationId').value = conversationId;
+        RT.store.set('conversationId', conversationId);
+        RT.log('Conversation ' + conversationId + ' picked up from the first message.');
+      }
+      Object.values(sides).forEach((side) => side.followConversation(conversationId));
+    }
+
+    const sides = {};
+    sides.courier = new ChatSide('courier');
+    sides.sender = new ChatSide('sender');
+
+    document.getElementById('conversationId').addEventListener('change', () => adoptConversation(RT.value('conversationId')));
+    document.getElementById('connectBothBtn').addEventListener('click', async () => {
+      await sides.courier.connect();
+      await sides.sender.connect();
+    });
+
+    // Saved tokens and IDs are restored after this script runs, so refresh the peer labels then.
+    document.addEventListener('DOMContentLoaded', () => Object.values(sides).forEach((side) => side.render()));
+  </script>
+</body>
+</html>

@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Racvest · Sender Nearby Couriers</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+  <link rel="stylesheet" href="shared/realtime-test.css" />
+  <script src="shared/realtime-test.js"></script>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <div class="logo-icon">R</div>
+      <div>Racvest <span>·</span> Nearby couriers<small>The sender's map of vehicles around them</small></div>
+    </div>
+    <div class="header-right">
+      <nav class="pages" id="pages"></nav>
+      <div class="status-pill" id="statusPill"><span class="dot"></span><span id="statusText">Disconnected</span></div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside>
+      <div>
+        <div class="section-label">Connection</div>
+        <div class="field">
+          <label>Realtime server URL</label>
+          <input id="serverUrl" data-save="serverUrl" type="text" placeholder="http://localhost:8090" />
+        </div>
+        <div class="field">
+          <label>Sender access token</label>
+          <textarea id="token" data-save="senderToken" placeholder="Token from logging in as a sender"></textarea>
+        </div>
+        <div class="field">
+          <label>Sender ID</label>
+          <input id="senderId" data-save="senderId" type="text" placeholder="user id of the sender in the token" />
+          <div class="hint">Answers go to /topic/nearby-couriers/{the token's user id}, so this must match the token.</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="connectBtn">Connect</button>
+          <button class="btn btn-danger" id="disconnectBtn" disabled>Disconnect</button>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div>
+        <div class="section-label">Sender location</div>
+        <div class="row">
+          <div class="field"><label>Latitude</label><input id="lat" type="text" value="6.5244" /></div>
+          <div class="field"><label>Longitude</label><input id="lng" type="text" value="3.3792" /></div>
+        </div>
+        <div class="help" style="margin-bottom:12px"><strong>Click the map</strong> or drag the blue pin to move the sender.</div>
+        <label class="check" style="margin-bottom:12px"><input type="checkbox" id="useGps" /> Use this computer's location instead</label>
+        <div class="field">
+          <label>Send my location every (seconds)</label>
+          <input id="interval" data-save="senderViewInterval" type="number" min="1" max="60" value="8" />
+          <div class="hint">The app repeats /app/location/sender-view every 5–10 s while the map is open.</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="startBtn" disabled>Start</button>
+          <button class="btn" id="onceBtn" disabled>Ask once</button>
+        </div>
+      </div>
+
+      <div class="help">
+        Realtime searches <strong>5 km</strong> around the sender and only returns couriers who are online
+        (sending heartbeats), not on a delivery, and have a known vehicle type. Each answer replaces the whole list.
+      </div>
+      <button class="btn btn-small" id="clearSaved" style="align-self:flex-start">Clear saved settings</button>
+    </aside>
+
+    <section class="content">
+      <div class="stats-row">
+        <div class="stat"><div class="stat-value accent" id="count">—</div><div class="stat-label">Couriers nearby</div></div>
+        <div class="stat"><div class="stat-value" id="nearest">—</div><div class="stat-label">Nearest</div></div>
+        <div class="stat"><div class="stat-value" id="asked">0</div><div class="stat-label">Times asked</div></div>
+        <div class="stat"><div class="stat-value" id="answers">0</div><div class="stat-label">Answers</div></div>
+        <div class="stat"><div class="stat-value small" id="lastAnswer">—</div><div class="stat-label">Last answer</div></div>
+      </div>
+
+      <div class="two-col">
+        <div id="map" class="map tall"></div>
+        <div class="card">
+          <div class="card-title">Couriers <small id="vehicleSummary">nearest first</small></div>
+          <div class="list" id="list"><div class="feed-empty">No answer yet.</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Answers <small>newest first</small></div>
+        <div class="feed" id="feed"></div>
+      </div>
+    </section>
+  </main>
+
+  <div class="log-strip" id="logStrip"><span>SYS</span>Ready. Connect with a sender token, then press Start.</div>
+
+  <script>
+    const SEARCH_RADIUS_M = 5000;
+    const conn = new RT.Connection();
+    const feed = new RT.Feed('feed', { max: 40, emptyHtml: 'Press <b>Start</b> to send your location and get nearby couriers back.' });
+    let position = { lat: 6.5244, lng: 3.3792 };
+    let timer = null, gpsWatch = null, asked = 0, answers = 0;
+
+    const map = RT.createMap('map', [position.lat, position.lng], 14);
+    const senderMarker = L.marker([position.lat, position.lng], { draggable: true, icon: RT.pinIcon('📍', '#4da3ff') }).addTo(map);
+    const radius = L.circle([position.lat, position.lng], { radius: SEARCH_RADIUS_M, color: '#4da3ff', weight: 1, fillOpacity: 0.05 }).addTo(map);
+    const courierLayer = L.layerGroup().addTo(map);
+
+    function setPosition(point, { pan = false } = {}) {
+      position = { lat: Number(point.lat), lng: Number(point.lng) };
+      senderMarker.setLatLng([position.lat, position.lng]);
+      radius.setLatLng([position.lat, position.lng]);
+      document.getElementById('lat').value = position.lat.toFixed(6);
+      document.getElementById('lng').value = position.lng.toFixed(6);
+      if (pan) map.panTo([position.lat, position.lng]);
+      RT.store.set('senderLastPosition', JSON.stringify(position));
+    }
+
+    map.on('click', (e) => {
+      if (gpsWatch !== null) { RT.log('Turn off "Use this computer\'s location" to place the sender by hand.', true); return; }
+      setPosition(e.latlng);
+    });
+    senderMarker.on('dragend', () => setPosition(senderMarker.getLatLng()));
+    ['lat', 'lng'].forEach((id) => document.getElementById(id).addEventListener('change', () => {
+      const lat = parseFloat(RT.value('lat')), lng = parseFloat(RT.value('lng'));
+      if (Number.isNaN(lat) || Number.isNaN(lng)) { RT.log('Latitude and longitude must be numbers.', true); return; }
+      setPosition({ lat, lng }, { pan: true });
+    }));
+
+    document.getElementById('useGps').addEventListener('change', (e) => {
+      if (!e.target.checked) { if (gpsWatch !== null) navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null; return; }
+      if (!navigator.geolocation) { RT.log('This browser has no location access.', true); e.target.checked = false; return; }
+      gpsWatch = navigator.geolocation.watchPosition(
+        (p) => setPosition({ lat: p.coords.latitude, lng: p.coords.longitude }, { pan: true }),
+        (err) => { RT.log('Location access failed: ' + err.message, true); e.target.checked = false; gpsWatch = null; },
+        { enableHighAccuracy: true, maximumAge: 5000 },
+      );
+    });
+
+    // ── Answers from the realtime service ──────────────────────────────────
+    function onNearby(body, channel) {
+      answers++;
+      const couriers = (body.couriers || body.vehicles || []).map((c) => ({
+        ...c,
+        distance: RT.distanceMeters(position, { lat: Number(c.latitude), lng: Number(c.longitude) }),
+      })).sort((a, b) => a.distance - b.distance);
+
+      courierLayer.clearLayers();
+      couriers.forEach((c) => {
+        const v = RT.VEHICLES[c.vehicleCategory] || { icon: '❔', color: '#7a8299', label: c.vehicleCategory || 'Unknown' };
+        L.marker([c.latitude, c.longitude], { icon: RT.pinIcon(v.icon, v.color) })
+          .bindTooltip(`${v.label} · ${RT.formatDistance(c.distance)}<br/>${c.courierId}`)
+          .addTo(courierLayer);
+      });
+
+      const byVehicle = {};
+      couriers.forEach((c) => { byVehicle[c.vehicleCategory] = (byVehicle[c.vehicleCategory] || 0) + 1; });
+      document.getElementById('vehicleSummary').textContent = Object.keys(byVehicle).length
+        ? Object.entries(byVehicle).map(([k, n]) => `${(RT.VEHICLES[k] || {}).icon || '❔'} ${n}`).join('  ')
+        : 'nearest first';
+      document.getElementById('count').textContent = couriers.length;
+      document.getElementById('nearest').textContent = couriers.length ? RT.formatDistance(couriers[0].distance) : '—';
+      document.getElementById('answers').textContent = answers;
+      document.getElementById('lastAnswer').textContent = RT.time(new Date());
+      document.getElementById('list').innerHTML = couriers.length
+        ? couriers.map((c) => {
+            const v = RT.VEHICLES[c.vehicleCategory] || { icon: '❔', label: c.vehicleCategory || 'Unknown' };
+            return `<div class="list-item"><span>${v.icon}</span><span class="grow">${RT.escapeHtml(v.label)}<br/><span class="mono">${RT.escapeHtml(c.courierId)}</span></span><span class="mono">${RT.formatDistance(c.distance)}</span></div>`;
+          }).join('')
+        : '<div class="feed-empty">No couriers within 5 km right now.</div>';
+
+      feed.add({
+        type: 'NEARBY COURIERS', channel, body, tone: couriers.length ? 'good' : 'warn',
+        summary: `<b>${couriers.length}</b> courier${couriers.length === 1 ? '' : 's'} within 5 km${couriers.length ? ', nearest ' + RT.formatDistance(couriers[0].distance) : ''}`,
+      });
+    }
+
+    async function ask() {
+      if (!conn.connected) return;
+      asked++;
+      document.getElementById('asked').textContent = asked;
+      try {
+        await conn.send('/app/location/sender-view', { latitude: Number(position.lat.toFixed(7)), longitude: Number(position.lng.toFixed(7)) });
+      } catch (e) {
+        RT.log('Send failed: ' + e.message, true);
+      }
+    }
+
+    function start() {
+      ask();
+      clearInterval(timer);
+      timer = setInterval(ask, Math.max(1, parseFloat(RT.value('interval')) || 8) * 1000);
+      document.getElementById('startBtn').textContent = 'Stop';
+      RT.log(`Sending the sender's location every ${RT.value('interval')} s.`);
+    }
+
+    function stop() {
+      clearInterval(timer);
+      timer = null;
+      document.getElementById('startBtn').textContent = 'Start';
+    }
+
+    document.getElementById('startBtn').addEventListener('click', () => timer ? (stop(), RT.log('Stopped.')) : start());
+    document.getElementById('onceBtn').addEventListener('click', ask);
+    document.getElementById('interval').addEventListener('change', () => { if (timer) start(); });
+
+    function setConnected(on) {
+      document.getElementById('connectBtn').disabled = on;
+      document.getElementById('disconnectBtn').disabled = !on;
+      document.getElementById('startBtn').disabled = !on;
+      document.getElementById('onceBtn').disabled = !on;
+      if (!on) stop();
+    }
+
+    document.getElementById('connectBtn').addEventListener('click', async () => {
+      const senderId = RT.value('senderId');
+      if (!RT.isUuid(senderId)) { RT.log('Enter the sender ID (a uuid).', true); return; }
+      try {
+        await conn.connect(RT.value('serverUrl'), RT.value('token'));
+        const topic = `/topic/nearby-couriers/${senderId}`;
+        conn.subscribe(topic, onNearby);
+        setConnected(true);
+        RT.log(`Subscribed to ${topic}. Press Start.`);
+      } catch (e) {
+        RT.log(e.message, true);
+        setConnected(false);
+      }
+    });
+    document.getElementById('disconnectBtn').addEventListener('click', async () => { await conn.disconnect(); setConnected(false); });
+    conn.onDisconnect = () => setConnected(false);
+
+    document.addEventListener('DOMContentLoaded', () => {
+      try {
+        const saved = JSON.parse(RT.store.get('senderLastPosition') || 'null');
+        if (saved && !Number.isNaN(saved.lat)) setPosition(saved, { pan: true });
+      } catch (e) { /* ignore */ }
+    });
+  </script>
+</body>
+</html>

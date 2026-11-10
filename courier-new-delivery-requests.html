@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Racvest · Courier New Delivery Requests</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+  <!-- Shared with the other test pages: page links and remembered settings. -->
+  <script src="shared/realtime-test.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0c0f;
+      --surface: #111318;
+      --surface2: #181c24;
+      --border: #1e2430;
+      --border2: #252d3d;
+      --accent: #00e5a0;
+      --accent2: #0066ff;
+      --warn: #ff6b35;
+      --priority: #f5a623;
+      --text: #e8eaf0;
+      --text2: #7a8299;
+      --text3: #4a5270;
+      --font-mono: 'IBM Plex Mono', monospace;
+      --font-display: 'Syne', sans-serif;
+      --radius: 10px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-display);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: linear-gradient(var(--border) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border) 1px, transparent 1px);
+      background-size: 40px 40px;
+      opacity: 0.3;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    header {
+      position: relative;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 32px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(10, 12, 15, 0.85);
+      backdrop-filter: blur(12px);
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+    }
+
+    .logo-icon {
+      width: 34px;
+      height: 34px;
+      background: var(--accent);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+    }
+
+    .logo span { color: var(--accent); }
+    .header-right { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    nav.pages { display: flex; gap: 6px; flex-wrap: wrap; }
+    nav.pages a { font-family: var(--font-mono); font-size: 11px; color: var(--text2); text-decoration: none; padding: 5px 10px; border: 1px solid var(--border); border-radius: 100px; background: var(--surface); }
+    nav.pages a:hover { color: var(--text); }
+    nav.pages a.current { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text2);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 6px 14px;
+      border-radius: 100px;
+      transition: all 0.3s;
+    }
+
+    .status-pill.connected {
+      color: var(--accent);
+      border-color: rgba(0, 229, 160, 0.3);
+      background: rgba(0, 229, 160, 0.05);
+    }
+
+    .status-pill.error {
+      color: var(--warn);
+      border-color: rgba(255, 107, 53, 0.3);
+      background: rgba(255, 107, 53, 0.05);
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text3);
+      transition: background 0.3s;
+    }
+
+    .status-pill.connected .dot {
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+      animation: pulse 2s infinite;
+    }
+
+    .status-pill.error .dot { background: var(--warn); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    main {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 0;
+      flex: 1;
+      min-height: calc(100vh - 69px);
+    }
+
+    aside {
+      border-right: 1px solid var(--border);
+      padding: 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      background: rgba(17, 19, 24, 0.5);
+    }
+
+    .section-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 2px;
+      color: var(--text3);
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    .field { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+
+    .field label {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text2);
+      letter-spacing: 0.5px;
+    }
+
+    .field input, .field textarea {
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      width: 100%;
+    }
+
+    .field textarea { resize: vertical; min-height: 90px; line-height: 1.6; }
+
+    .field input:focus, .field textarea:focus {
+      border-color: rgba(0, 229, 160, 0.4);
+      box-shadow: 0 0 0 3px rgba(0, 229, 160, 0.06);
+    }
+
+    .field input::placeholder, .field textarea::placeholder { color: var(--text3); }
+
+    .btn {
+      width: 100%;
+      padding: 12px 20px;
+      border: none;
+      border-radius: var(--radius);
+      font-family: var(--font-display);
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: 0.3px;
+    }
+
+    .btn-primary { background: var(--accent); color: #000; }
+
+    .btn-primary:hover {
+      background: #00ffb3;
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(0, 229, 160, 0.25);
+    }
+
+    .btn-primary:active { transform: translateY(0); }
+
+    .btn-danger {
+      background: transparent;
+      border: 1px solid rgba(255, 107, 53, 0.4);
+      color: var(--warn);
+    }
+
+    .btn-danger:hover {
+      background: rgba(255, 107, 53, 0.08);
+      border-color: var(--warn);
+    }
+
+    .btn-clear {
+      background: transparent;
+      border: 1px solid var(--border2);
+      color: var(--text2);
+      font-size: 12px;
+      padding: 9px;
+    }
+
+    .btn-clear:hover { border-color: var(--text2); color: var(--text); }
+
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      transform: none !important;
+      box-shadow: none !important;
+    }
+
+    .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px; }
+    .divider { height: 1px; background: var(--border); }
+
+    .stats-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+    .stat-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+    }
+
+    .stat-val { font-size: 26px; font-weight: 800; line-height: 1; color: var(--accent); }
+    .stat-lbl { font-family: var(--font-mono); font-size: 10px; color: var(--text2); margin-top: 5px; letter-spacing: 0.5px; }
+
+    .feed-panel { display: flex; flex-direction: column; overflow: hidden; }
+
+    .feed-header {
+      padding: 20px 28px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .feed-title { font-size: 18px; font-weight: 700; }
+    .feed-subtitle { font-family: var(--font-mono); font-size: 11px; color: var(--text2); margin-top: 3px; }
+    .feed-actions { display: flex; gap: 10px; align-items: center; }
+
+    .badge {
+      background: rgba(0, 229, 160, 0.12);
+      color: var(--accent);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 100px;
+      border: 1px solid rgba(0, 229, 160, 0.2);
+    }
+
+    .feed-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .feed-body::-webkit-scrollbar { width: 4px; }
+    .feed-body::-webkit-scrollbar-track { background: transparent; }
+    .feed-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      color: var(--text3);
+      text-align: center;
+      padding: 60px 20px;
+    }
+
+    .empty-icon { font-size: 48px; opacity: 0.4; }
+    .empty-state h3 { font-size: 16px; color: var(--text2); }
+
+    .empty-state p {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      max-width: 300px;
+      line-height: 1.7;
+    }
+
+    .delivery-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      animation: slideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
+    }
+
+    .delivery-card.high-priority::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: linear-gradient(180deg, var(--priority), var(--warn));
+      border-radius: 3px 0 0 3px;
+    }
+
+    .delivery-card.standard-priority::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: linear-gradient(180deg, var(--accent), var(--accent2));
+      border-radius: 3px 0 0 3px;
+    }
+
+    .delivery-card:hover {
+      border-color: var(--border2);
+      background: var(--surface2);
+    }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-14px) scale(0.97); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .card-title-row { display: flex; align-items: center; gap: 10px; }
+
+    .live-badge {
+      background: rgba(0, 229, 160, 0.12);
+      color: var(--accent);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      padding: 3px 10px;
+      border-radius: 100px;
+      border: 1px solid rgba(0, 229, 160, 0.25);
+    }
+
+    .priority-badge-high {
+      background: rgba(245, 166, 35, 0.12);
+      color: var(--priority);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      padding: 3px 10px;
+      border-radius: 100px;
+      border: 1px solid rgba(245, 166, 35, 0.25);
+    }
+
+    .priority-badge-standard {
+      background: rgba(0, 102, 255, 0.1);
+      color: #6699ff;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      padding: 3px 10px;
+      border-radius: 100px;
+      border: 1px solid rgba(0, 102, 255, 0.2);
+    }
+
+    .delivery-code {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent);
+      letter-spacing: 1px;
+    }
+
+    .card-time {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text3);
+    }
+
+    .card-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+
+    .price-hero { display: flex; align-items: flex-end; gap: 8px; }
+
+    .price-big {
+      font-family: var(--font-mono);
+      font-size: 32px;
+      font-weight: 600;
+      color: var(--accent);
+      line-height: 1;
+    }
+
+    .price-label {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text2);
+      padding-bottom: 4px;
+    }
+
+    .sender-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+    }
+
+    .sender-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent2), var(--accent));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+      flex-shrink: 0;
+    }
+
+    .sender-info { flex: 1; }
+
+    .sender-name {
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .sender-rating {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text2);
+      margin-top: 2px;
+    }
+
+    .stars { color: #f5a623; letter-spacing: 1px; }
+
+    .route-row {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .route-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+
+    .route-box-label {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      color: var(--text3);
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .route-box-value {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1.4;
+    }
+
+    .route-arrow { color: var(--accent); font-size: 18px; text-align: center; }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .info-item {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+
+    .info-item-label {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      color: var(--text3);
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .info-item-value {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      word-break: break-word;
+    }
+
+    .info-item.full { grid-column: 1 / -1; }
+
+    .id-chip {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      color: var(--text3);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      padding: 4px 9px;
+      border-radius: 5px;
+      display: inline-flex;
+      gap: 5px;
+      align-items: center;
+    }
+
+    .id-chip strong { color: var(--text2); }
+
+    .log-strip {
+      border-top: 1px solid var(--border);
+      background: rgba(10, 12, 15, 0.9);
+      padding: 10px 28px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text3);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 38px;
+    }
+
+    .log-strip span { color: var(--accent); }
+    .log-strip.err span { color: var(--warn); }
+
+    .toast {
+      position: fixed;
+      bottom: 28px;
+      right: 28px;
+      background: var(--surface2);
+      border: 1px solid var(--accent);
+      border-radius: 10px;
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent);
+      z-index: 100;
+      animation: toastIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+
+    .toast.priority {
+      border-color: var(--priority);
+      color: var(--priority);
+    }
+
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; }
+      aside { border-right: none; border-bottom: 1px solid var(--border); }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🚚</div>
+      Rac<span>vest</span>
+    </div>
+    <div class="header-right">
+      <nav class="pages" id="pages"></nav>
+      <div class="status-pill" id="statusPill">
+        <div class="dot"></div>
+        <span id="statusText">Disconnected</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <aside>
+      <div>
+        <div class="section-label">Connection</div>
+
+        <div class="field">
+          <label>Server URL</label>
+          <input id="serverUrl" data-save="serverUrl" type="text" placeholder="http://localhost:8090" />
+        </div>
+
+        <div class="field">
+          <label>JWT Access Token</label>
+          <textarea id="jwtToken" data-save="courierToken" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."></textarea>
+        </div>
+
+        <div class="field">
+          <label>Courier ID</label>
+          <input id="courierId" data-save="courierId" type="text" placeholder="uuid-of-the-courier" />
+        </div>
+
+        <div class="field">
+          <label>Courier Location (sent as a heartbeat every 10s)</label>
+          <input id="courierLat" data-save="courierEventsLat" type="text" value="6.5244" placeholder="latitude" />
+          <input id="courierLng" data-save="courierEventsLng" type="text" value="3.3792" placeholder="longitude" style="margin-top:6px" />
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-primary" id="connectBtn">Connect</button>
+          <button class="btn btn-danger" id="disconnectBtn" disabled>Disconnect</button>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div>
+        <div class="section-label">Live Stats</div>
+        <div class="stats-row">
+          <div class="stat-box">
+            <div class="stat-val" id="deliveryCount">0</div>
+            <div class="stat-lbl">Deliveries received</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-val" id="highPriorityCount">0</div>
+            <div class="stat-lbl">High priority</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div>
+        <div class="section-label">Testing Guide</div>
+        <p style="font-family: var(--font-mono); font-size: 11px; color: var(--text2); line-height: 1.8;">
+          1. Fill in server URL + JWT token<br/>
+          2. Enter the Courier ID to monitor<br/>
+          3. Click <strong style="color:var(--accent)">Connect</strong> to subscribe<br/>
+          4. Use Postman to call <code style="color:#6699ff">POST /sender/deliveries</code><br/>
+          5. Watch live delivery broadcasts appear below ↓
+        </p>
+      </div>
+    </aside>
+
+    <section class="feed-panel">
+      <div class="feed-header">
+        <div>
+          <div class="feed-title">Live Delivery Feed</div>
+          <div class="feed-subtitle" id="subscribeLabel">Not subscribed to any courier channel</div>
+        </div>
+        <div class="feed-actions">
+          <span class="badge" id="liveBadge" style="display:none">● LIVE</span>
+          <button class="btn btn-clear" id="clearBtn">Clear</button>
+        </div>
+      </div>
+
+      <div class="feed-body" id="feedBody">
+        <div class="empty-state" id="emptyState">
+          <div class="empty-icon">🛵</div>
+          <h3>Waiting for deliveries</h3>
+          <p>Connect with a Courier ID, then create a delivery request via Postman. If the courier is nearby, the broadcast will appear here in real time.</p>
+        </div>
+      </div>
+
+      <div class="log-strip" id="logStrip">
+        <span>SYS</span> Ready. Configure connection and click Connect.
+      </div>
+    </section>
+  </main>
+
+  <script>
+    let stompClient = null;
+    let deliveryCount = 0;
+    let highPriorityCount = 0;
+    let heartbeatTimer = null;
+
+    // Couriers only get broadcasts when the realtime service knows where they are,
+    // so send a location the way the courier app does.
+    function sendHeartbeat() {
+      const latitude = parseFloat(document.getElementById('courierLat').value);
+      const longitude = parseFloat(document.getElementById('courierLng').value);
+      if (!stompClient || Number.isNaN(latitude) || Number.isNaN(longitude)) return;
+      stompClient.send('/app/location/heartbeat', { 'content-type': 'application/json' },
+        JSON.stringify({ latitude, longitude }));
+    }
+
+    function stopHeartbeat() {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+
+    function setStatus(state, text) {
+      const pill = document.getElementById('statusPill');
+      pill.className = 'status-pill ' + state;
+      document.getElementById('statusText').textContent = text;
+    }
+
+    function log(msg, isErr = false) {
+      const strip = document.getElementById('logStrip');
+      strip.className = 'log-strip' + (isErr ? ' err' : '');
+      strip.innerHTML = `<span>${isErr ? 'ERR' : 'SYS'}</span> ${msg}`;
+    }
+
+    function connect() {
+      const serverUrl = document.getElementById('serverUrl').value.trim();
+      const token = document.getElementById('jwtToken').value.trim();
+      const courierId = document.getElementById('courierId').value.trim();
+
+      if (!serverUrl || !token || !courierId) {
+        log('Please fill in server URL, JWT token, and courier ID.', true);
+        return;
+      }
+
+      const wsUrl = serverUrl.replace(/\/$/, '') + '/ws';
+      log(`Connecting to ${wsUrl}...`);
+      setStatus('', 'Connecting…');
+
+      try {
+        const socket = new SockJS(wsUrl);
+        stompClient = Stomp.over(socket);
+        stompClient.debug = null;
+
+        stompClient.connect(
+          { Authorization: 'Bearer ' + token },
+          () => {
+            setStatus('connected', 'Connected');
+            document.getElementById('connectBtn').disabled = true;
+            document.getElementById('disconnectBtn').disabled = false;
+            document.getElementById('liveBadge').style.display = 'flex';
+
+            const topic = `/topic/courier/${courierId}`;
+            document.getElementById('subscribeLabel').textContent = `Subscribed → ${topic}`;
+            log(`Subscribed to ${topic}, sending location every 10s`);
+
+            stompClient.subscribe(topic, (frame) => {
+              try {
+                const event = JSON.parse(frame.body);
+                if (event.type === 'DELIVERY_LIVE') {
+                  renderDeliveryEvent(event.payload, event.timestamp);
+                }
+              } catch (e) {
+                log('Failed to parse incoming message: ' + e.message, true);
+              }
+            });
+
+            sendHeartbeat();
+            stopHeartbeat();
+            heartbeatTimer = setInterval(sendHeartbeat, 10000);
+          },
+          (error) => {
+            stopHeartbeat();
+            setStatus('error', 'Failed');
+            log('Connection error: ' + ((error && error.headers && error.headers.message) ? error.headers.message : error), true);
+            document.getElementById('connectBtn').disabled = false;
+            document.getElementById('disconnectBtn').disabled = true;
+          }
+        );
+      } catch (e) {
+        setStatus('error', 'Error');
+        log('Could not establish connection: ' + e.message, true);
+      }
+    }
+
+    function disconnect() {
+      stopHeartbeat();
+      if (stompClient) {
+        stompClient.disconnect(() => {
+          setStatus('', 'Disconnected');
+          log('Disconnected from server.');
+          document.getElementById('connectBtn').disabled = false;
+          document.getElementById('disconnectBtn').disabled = true;
+          document.getElementById('liveBadge').style.display = 'none';
+          document.getElementById('subscribeLabel').textContent = 'Not subscribed to any courier channel';
+        });
+      }
+    }
+
+    function renderDeliveryEvent(payload, timestamp) {
+      const feed = document.getElementById('feedBody');
+      const empty = document.getElementById('emptyState');
+      if (empty) empty.remove();
+
+      deliveryCount++;
+      document.getElementById('deliveryCount').textContent = deliveryCount;
+
+      const isHighPriority = payload.highPriority === true;
+      if (isHighPriority) {
+        highPriorityCount++;
+        document.getElementById('highPriorityCount').textContent = highPriorityCount;
+      }
+
+      const delivery = payload.delivery || {};
+      const senderName = payload.senderName || 'Unknown Sender';
+      const senderRating = payload.senderAverageRating || 0;
+      const ratingsCount = payload.ratingsCount || 0;
+
+      const price = parseFloat(delivery.offeredPrice || 0);
+
+      const timeStr = timestamp
+        ? new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+      const preferredStr = delivery.preferredDeliveryDate
+        ? new Date(delivery.preferredDeliveryDate).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : '—';
+
+      const stars = renderStars(senderRating);
+
+      const card = document.createElement('div');
+      card.className = `delivery-card ${isHighPriority ? 'high-priority' : 'standard-priority'}`;
+      card.innerHTML = `
+        <div class="card-header">
+          <div class="card-title-row">
+            <span class="live-badge">● Live</span>
+            ${isHighPriority
+              ? '<span class="priority-badge-high">⭐ High Priority</span>'
+              : '<span class="priority-badge-standard">Standard</span>'}
+            <span class="delivery-code">${delivery.deliveryCode || '—'}</span>
+          </div>
+          <span class="card-time">${timeStr}</span>
+        </div>
+        <div class="card-body">
+          <div class="price-hero">
+            <div class="price-big">₦${price.toLocaleString()}</div>
+            <div class="price-label">offered price</div>
+          </div>
+
+          <div class="sender-row">
+            <div class="sender-avatar">${senderName.charAt(0).toUpperCase()}</div>
+            <div class="sender-info">
+              <div class="sender-name">${senderName}</div>
+              <div class="sender-rating">
+                <span class="stars">${stars}</span>
+                ${senderRating.toFixed(1)} · ${ratingsCount} ${ratingsCount === 1 ? 'review' : 'reviews'}
+              </div>
+            </div>
+          </div>
+
+          <div class="route-row">
+            <div class="route-box">
+              <div class="route-box-label">📍 Pickup</div>
+              <div class="route-box-value">${delivery.pickupAddress || '—'}</div>
+            </div>
+            <div class="route-arrow">→</div>
+            <div class="route-box">
+              <div class="route-box-label">🏁 Dropoff</div>
+              <div class="route-box-value">${delivery.dropoffAddress || '—'}</div>
+            </div>
+          </div>
+
+          <div class="info-grid">
+            <div class="info-item">
+              <div class="info-item-label">📦 Package</div>
+              <div class="info-item-value">${delivery.packageName || '—'}</div>
+            </div>
+            <div class="info-item">
+              <div class="info-item-label">🏷 Type</div>
+              <div class="info-item-value">${delivery.packageType || '—'}</div>
+            </div>
+            <div class="info-item">
+              <div class="info-item-label">🚗 Vehicle</div>
+              <div class="info-item-value">${delivery.vehicleCategory || '—'}</div>
+            </div>
+            <div class="info-item">
+              <div class="info-item-label">🕐 Preferred Time</div>
+              <div class="info-item-value">${preferredStr}</div>
+            </div>
+            ${delivery.additionalNotes ? `
+            <div class="info-item full">
+              <div class="info-item-label">📝 Notes</div>
+              <div class="info-item-value">${delivery.additionalNotes}</div>
+            </div>` : ''}
+          </div>
+
+          <div>
+            <span class="id-chip"><strong>DELIVERY</strong> ${truncateId(delivery.deliveryId)}</span>
+          </div>
+        </div>
+      `;
+
+      feed.insertBefore(card, feed.firstChild);
+      log(`New delivery broadcast — ${delivery.deliveryCode || delivery.deliveryId} — ₦${price.toLocaleString()} ${isHighPriority ? '⭐ HIGH PRIORITY' : ''}`);
+      showToast(
+        isHighPriority
+          ? `⭐ High priority delivery — ₦${price.toLocaleString()}`
+          : `New delivery nearby — ₦${price.toLocaleString()}`,
+        isHighPriority
+      );
+    }
+
+    function renderStars(rating) {
+      const full = Math.floor(rating);
+      const half = rating - full >= 0.5;
+      let s = '';
+      for (let i = 0; i < 5; i++) {
+        if (i < full) s += '★';
+        else if (i === full && half) s += '½';
+        else s += '☆';
+      }
+      return s;
+    }
+
+    function truncateId(id) {
+      if (!id) return '—';
+      return id.substring(0, 8) + '…';
+    }
+
+    function clearFeed() {
+      const feed = document.getElementById('feedBody');
+      feed.innerHTML = `
+        <div class="empty-state" id="emptyState">
+          <div class="empty-icon">🛵</div>
+          <h3>Waiting for deliveries</h3>
+          <p>Connect with a Courier ID, then create a delivery request via Postman. If the courier is nearby, the broadcast will appear here in real time.</p>
+        </div>`;
+      deliveryCount = 0;
+      highPriorityCount = 0;
+      document.getElementById('deliveryCount').textContent = '0';
+      document.getElementById('highPriorityCount').textContent = '0';
+      log('Feed cleared.');
+    }
+
+    document.getElementById('connectBtn').addEventListener('click', connect);
+    document.getElementById('disconnectBtn').addEventListener('click', disconnect);
+    document.getElementById('clearBtn').addEventListener('click', clearFeed);
+
+    let toastTimer = null;
+    function showToast(msg, isPriority = false) {
+      const existing = document.querySelector('.toast');
+      if (existing) existing.remove();
+      clearTimeout(toastTimer);
+      const t = document.createElement('div');
+      t.className = 'toast' + (isPriority ? ' priority' : '');
+      t.innerHTML = `<span>${isPriority ? '⭐' : '🚚'}</span> ${msg}`;
+      document.body.appendChild(t);
+      toastTimer = setTimeout(() => t.remove(), 3500);
+    }
+  </script>
+</body>
+</html>

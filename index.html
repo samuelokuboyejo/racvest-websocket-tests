@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Racvest · Realtime Test Pages</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="shared/realtime-test.css" />
+  <script src="shared/realtime-test.js"></script>
+  <style>
+    .content { max-width: 1100px; width: 100%; margin: 0 auto; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+    .page-card { text-decoration: none; color: inherit; display: flex; flex-direction: column; gap: 8px; transition: border-color 0.15s; }
+    .page-card:hover { border-color: var(--accent); }
+    .page-card .who { font-family: var(--font-mono); font-size: 10px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--accent); }
+    .page-card.sender .who { color: #4da3ff; }
+    .page-card h3 { font-size: 16px; }
+    .page-card p { font-size: 13px; color: var(--text2); line-height: 1.55; }
+    .page-card code { font-family: var(--font-mono); font-size: 11px; color: var(--text3); word-break: break-all; }
+    ol.flow { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; color: var(--text2); line-height: 1.55; }
+    ol.flow b { color: var(--text); }
+    h2 { font-size: 18px; margin-bottom: 4px; }
+    .lead { color: var(--text2); font-size: 14px; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <div class="logo-icon">R</div>
+      <div>Racvest <span>·</span> Realtime test pages<small>Open these in the browser to test the realtime service by hand</small></div>
+    </div>
+    <div class="header-right"><nav class="pages" id="pages"></nav></div>
+  </header>
+
+  <main style="position:relative;z-index:1;flex:1">
+    <section class="content">
+      <div class="card">
+        <h2>How these pages work</h2>
+        <p class="lead">
+          Every page connects to the <b>realtime service</b> (for example <code>http://localhost:8090</code>) over STOMP,
+          with the same access token the app uses after logging in to Racvest. Racvest itself is only used to create
+          deliveries, bids and so on (Postman or the app). The server URL, tokens and IDs you type are remembered in this
+          browser and shared between pages, so you only paste them once. Open each page in its own tab to play both sides.
+        </p>
+        <p class="lead" style="margin-top:10px">
+          <b>Which server URL?</b> On the hosted site, use the realtime service's https address for the environment you are testing.
+          <code>http://localhost:8090</code> also works from the hosted site in Chrome, which may first ask to allow access to
+          devices on your local network. Saved tokens stay in your browser only and are never sent anywhere except the server you connect to.
+        </p>
+      </div>
+
+      <div>
+        <h2>Both sides on one screen</h2>
+        <div class="grid" style="margin-top:10px">
+          <a class="card page-card" href="delivery-flow.html">
+            <span class="who">Courier left · sender right</span><h3>Delivery flow</h3>
+            <p>One delivery from request to drop-off. The courier sends heartbeats and gets the request; the sender sees bids, viewers and tracking, and watches the courier drive on a map. A progress bar ticks off each step.</p>
+            <code>/topic/courier/{id} · /topic/sender/{id} · /topic/delivery/{id}/…</code>
+          </a>
+          <a class="card page-card" href="chat.html">
+            <span class="who">Courier left · sender right</span><h3>Chat</h3>
+            <p>Type on either side and watch the message land on the other. Shows delivered and read ticks, typing and unread counts.</p>
+            <code>/app/send-message · /app/typing · /user/queue/messages · /topic/messages/{conversationId}</code>
+          </a>
+        </div>
+      </div>
+
+      <div>
+        <h2>Courier pages</h2>
+        <div class="grid" style="margin-top:10px">
+          <a class="card page-card" href="courier-new-delivery-requests.html">
+            <span class="who">Courier</span><h3>New delivery requests</h3>
+            <p>The original broadcast monitor. Shows each new request (DELIVERY_LIVE) as a card, and sends a heartbeat so the courier stays available.</p>
+            <code>/topic/courier/{courierId}</code>
+          </a>
+          <a class="card page-card" href="courier-all-events.html">
+            <span class="who">Courier</span><h3>All courier events</h3>
+            <p>Every event sent to a courier: new requests, auto-matched offers, accepted bids, price changes. Filter by type.</p>
+            <code>/topic/courier/{courierId}</code>
+          </a>
+          <a class="card page-card" href="courier-publish-location.html">
+            <span class="who">Courier</span><h3>Publish location</h3>
+            <p>Sends heartbeats (available) or live delivery locations (on a delivery) from a map. Can simulate driving to a point. Every send is confirmed by the server.</p>
+            <code>/app/location/heartbeat · /app/location/update</code>
+          </a>
+        </div>
+      </div>
+
+      <div>
+        <h2>Sender pages</h2>
+        <div class="grid" style="margin-top:10px">
+          <a class="card page-card sender" href="sender-delivery-request-events.html">
+            <span class="who">Sender</span><h3>Delivery request events</h3>
+            <p>After creating a request: bids coming in, couriers viewing it, auto-accept, tracking status, plus payments and price changes on the sender topic.</p>
+            <code>/topic/sender/{id} · /topic/delivery/{id}/bids · viewers · auto-accept · tracking</code>
+          </a>
+          <a class="card page-card sender" href="sender-track-delivery.html">
+            <span class="who">Sender</span><h3>Track delivery</h3>
+            <p>A map of the courier moving on an assigned delivery, with ETA, distance left and the status timeline.</p>
+            <code>/topic/delivery/{id}/courier-location · /topic/delivery/{id}/tracking</code>
+          </a>
+          <a class="card page-card sender" href="sender-nearby-couriers.html">
+            <span class="who">Sender</span><h3>Nearby couriers</h3>
+            <p>The sender sends their location every few seconds and gets the couriers within 5 km back as map pins.</p>
+            <code>/app/location/sender-view → /topic/nearby-couriers/{senderId}</code>
+          </a>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Test the whole delivery flow</h2>
+        <p class="lead" style="margin-top:6px">The quickest way is <b>Delivery flow</b>, which shows both sides at once. To test one side on its own, use the single pages:</p>
+        <ol class="flow" style="margin-top:10px">
+          <li>Open <b>All courier events</b> (or New delivery requests) with a courier token and leave the heartbeat on. The courier is now available.</li>
+          <li>Open <b>Delivery request events</b> with the sender token and connect.</li>
+          <li>Create a delivery request as the sender (Postman or the app), paste its ID into the sender page and press <b>Watch</b>.</li>
+          <li>The courier page should show <b>DELIVERY_LIVE</b> within a few seconds. Place a bid as the courier: the sender page shows <b>BID_PLACED</b>.</li>
+          <li>Accept the bid as the sender: the courier gets <b>BID_ACCEPTED</b> and a chat opens between them. Try it on the <b>Chat</b> page, which shows both sides at once.</li>
+          <li>Open <b>Publish location</b> as the courier, choose <b>On a delivery</b>, enter the delivery ID, pick a destination and press <b>Drive</b>, then <b>Start publishing</b>.</li>
+          <li>Open <b>Track delivery</b> as the sender with the same delivery ID: the courier moves on the map, and the status timeline moves as the courier updates the delivery status.</li>
+        </ol>
+      </div>
+
+      <div class="card">
+        <h2>If nothing arrives</h2>
+        <ol class="flow" style="margin-top:10px">
+          <li>The courier must be <b>available</b>: connected, active role COURIER, and a heartbeat in the last 30 seconds.</li>
+          <li>The IDs you type must belong to the token. Realtime only delivers a user's topics to that user.</li>
+          <li>Racvest must have <code>racvest.realtime.enabled=true</code>, and both services must point at each other.</li>
+          <li>Open the browser console (⌥⌘J) for connection errors, and check the realtime log for <code>presence rejected</code> warnings.</li>
+        </ol>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

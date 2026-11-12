@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Racvest · Notifications</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+  <link rel="stylesheet" href="shared/realtime-test.css" />
+  <script src="shared/realtime-test.js"></script>
+  <style>
+    .badge-count { display: inline-flex; min-width: 26px; height: 26px; padding: 0 8px; border-radius: 100px; background: var(--danger); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; align-items: center; justify-content: center; }
+    .badge-count.zero { background: var(--surface2); color: var(--text3); border: 1px solid var(--border2); }
+    .note { display: flex; gap: 12px; padding: 12px 14px; background: var(--surface2); border: 1px solid var(--border); border-left: 3px solid var(--accent2); border-radius: 8px; animation: slideIn 0.25s ease-out; }
+    .note.announcement { border-left-color: var(--priority); }
+    .note .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-top: 6px; flex: none; }
+    .note .body { flex: 1; min-width: 0; }
+    .note .title { font-weight: 700; font-size: 14px; }
+    .note .msg { color: var(--text2); font-size: 13px; margin-top: 3px; line-height: 1.5; word-wrap: break-word; }
+    .note .meta { font-family: var(--font-mono); font-size: 10.5px; color: var(--text3); margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <div class="logo-icon">R</div>
+      <div>Racvest <span>·</span> Notifications<small>The in-app inbox and unread badge, live</small></div>
+    </div>
+    <div class="header-right">
+      <nav class="pages" id="pages"></nav>
+      <div class="status-pill" id="statusPill"><span class="dot"></span><span id="statusText">Disconnected</span></div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside>
+      <div>
+        <div class="section-label">Connection</div>
+        <div class="field">
+          <label>Realtime server URL</label>
+          <input id="serverUrl" data-save="serverUrl" type="text" placeholder="http://localhost:8090" />
+        </div>
+        <div class="choice" style="margin-bottom:12px">
+          <label><input type="radio" name="who" value="sender" checked /><div>Sender<small>uses the saved sender token</small></div></label>
+          <label><input type="radio" name="who" value="courier" /><div>Courier<small>uses the saved courier token</small></div></label>
+        </div>
+        <div class="field">
+          <label>Access token</label>
+          <textarea id="token" placeholder="Token of the user whose notifications to watch"></textarea>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="connectBtn">Connect</button>
+          <button class="btn btn-danger" id="disconnectBtn" disabled>Disconnect</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-label">Subscribed to</div>
+        <div class="subscriptions" id="subs"><div style="color:var(--text3)">Nothing yet</div></div>
+      </div>
+
+      <div class="help">
+        Every notification saved to this user's inbox arrives on <strong>/user/queue/notifications</strong>
+        with the new unread count. Try it: accept a bid, send an announcement from the admin API, or mark
+        notifications as read (<code>PATCH /notifications/mark-all-read</code>) and watch the badge.
+      </div>
+      <button class="btn btn-small" id="clearSaved" style="align-self:flex-start">Clear saved settings</button>
+    </aside>
+
+    <section class="content">
+      <div class="stats-row">
+        <div class="stat"><div class="stat-value"><span class="badge-count zero" id="badge">—</span></div><div class="stat-label">Unread (badge)</div></div>
+        <div class="stat"><div class="stat-value accent" id="newCount">0</div><div class="stat-label">New notifications</div></div>
+        <div class="stat"><div class="stat-value" id="announcementCount">0</div><div class="stat-label">Announcements</div></div>
+        <div class="stat"><div class="stat-value" id="countUpdates">0</div><div class="stat-label">Badge updates</div></div>
+      </div>
+
+      <div class="two-col">
+        <div class="card">
+          <div class="card-title">Inbox <small>newest first, as the app would show it</small></div>
+          <div class="list" id="inbox"><div class="feed-empty">Nothing yet. Connect, then trigger a notification.</div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Frames <small>every push on the queue</small></div>
+          <div class="feed" id="feed"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="log-strip" id="logStrip"><span>SYS</span>Ready. Pick whose notifications to watch, then connect.</div>
+
+  <script>
+    const QUEUE = '/user/queue/notifications';
+    const conn = new RT.Connection();
+    const feed = new RT.Feed('feed', { max: 80, emptyHtml: 'No pushes yet.' });
+    const inbox = [];
+    const counts = { NEW_NOTIFICATION: 0, ANNOUNCEMENT: 0, UNREAD_COUNT: 0 };
+
+    const who = () => document.querySelector('input[name=who]:checked').value;
+    function loadToken() { document.getElementById('token').value = RT.store.get(who() + 'Token') || ''; }
+    document.querySelectorAll('input[name=who]').forEach((el) => el.addEventListener('change', loadToken));
+    document.getElementById('token').addEventListener('input', (e) => RT.store.set(who() + 'Token', e.target.value.trim()));
+
+    function setBadge(count) {
+      const badge = document.getElementById('badge');
+      badge.textContent = count;
+      badge.className = 'badge-count' + (Number(count) === 0 ? ' zero' : '');
+    }
+
+    function renderInbox() {
+      document.getElementById('inbox').innerHTML = inbox.length
+        ? inbox.map((n) => `
+            <div class="note ${n.announcement ? 'announcement' : ''}">
+              ${n.readStatus ? '' : '<span class="dot"></span>'}
+              <div class="body">
+                <div class="title">${RT.escapeHtml(n.title || '(no title)')}</div>
+                <div class="msg">${RT.escapeHtml(n.message || '')}</div>
+                <div class="meta">${n.announcement ? 'Announcement · ' : ''}${RT.escapeHtml(n.senderName || '')} ${n.createdAt ? RT.escapeHtml(String(n.createdAt).replace('T', ' ').slice(0, 19)) : ''}</div>
+              </div>
+            </div>`).join('')
+        : '<div class="feed-empty">Nothing yet. Connect, then trigger a notification.</div>';
+    }
+
+    function onPush(body, channel) {
+      const type = body && body.type;
+      if (counts[type] != null) counts[type]++;
+      document.getElementById('newCount').textContent = counts.NEW_NOTIFICATION;
+      document.getElementById('announcementCount').textContent = counts.ANNOUNCEMENT;
+      document.getElementById('countUpdates').textContent = counts.UNREAD_COUNT;
+      if (body && body.unreadCount != null) setBadge(body.unreadCount);
+      if (body && body.notification) {
+        inbox.unshift({ ...body.notification, announcement: type === 'ANNOUNCEMENT' });
+        renderInbox();
+      }
+      const n = (body && body.notification) || {};
+      const summary = type === 'UNREAD_COUNT'
+        ? `Badge is now <b>${body.unreadCount}</b>`
+        : `<b>${RT.escapeHtml(n.title || '')}</b> ${RT.escapeHtml(n.message || '')}${body.unreadCount != null ? ` · unread ${body.unreadCount}` : ' · refetch the inbox'}`;
+      feed.add({ type: type || 'MESSAGE', channel, body, summary, tone: type === 'ANNOUNCEMENT' ? 'warn' : type === 'NEW_NOTIFICATION' ? 'good' : '' });
+      RT.log(`${type} received.`);
+    }
+
+    function setConnected(on) {
+      document.getElementById('connectBtn').disabled = on;
+      document.getElementById('disconnectBtn').disabled = !on;
+      document.getElementById('subs').innerHTML = on ? `<div>${QUEUE}</div>` : '<div style="color:var(--text3)">Nothing yet</div>';
+    }
+
+    document.getElementById('connectBtn').addEventListener('click', async () => {
+      try {
+        await conn.connect(RT.value('serverUrl'), RT.value('token'));
+        conn.subscribe(QUEUE, onPush);
+        setConnected(true);
+        RT.log(`Listening on ${QUEUE} as the ${who()}.`);
+      } catch (e) {
+        RT.log(e.message, true);
+        setConnected(false);
+      }
+    });
+    document.getElementById('disconnectBtn').addEventListener('click', async () => { await conn.disconnect(); setConnected(false); });
+    conn.onDisconnect = () => setConnected(false);
+
+    document.addEventListener('DOMContentLoaded', loadToken);
+  </script>
+</body>
+</html>

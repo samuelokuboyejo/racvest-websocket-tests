@@ -13,6 +13,7 @@ Open `index.html` for the list of pages and the test flows.
 | `sender-delivery-request-events.html` | Sender: bids, viewers, auto-accept, tracking, sender events |
 | `sender-track-delivery.html` | Sender: the courier moving on a map, ETA and status |
 | `sender-nearby-couriers.html` | Sender: nearby couriers around the sender's location |
+| `notifications.html` | Any user: in-app notifications and the unread badge on `/user/queue/notifications` |
 
 ## Running
 

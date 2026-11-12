@@ -11,6 +11,7 @@
     ['sender-track-delivery.html', 'Sender · track delivery'],
     ['sender-nearby-couriers.html', 'Sender · nearby couriers'],
     ['chat.html', 'Chat (both)'],
+    ['notifications.html', 'Notifications'],
   ];
 
   const VEHICLES = {

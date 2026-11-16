@@ -185,7 +185,7 @@
       try {
         await conn.connect(RT.value('serverUrl'), RT.value('token'));
         conn.subscribe(RT.QUEUES.deliveries, (body, channel) => {
-          if (body.deliveryId !== deliveryId) return;
+          if ((body.payload || {}).deliveryId !== deliveryId) return;
           if (body.type === 'COURIER_LOCATION') onLocation(body.payload, channel);
           else if (body.type === 'TRACKING_UPDATE') onTracking(body, channel);
         });

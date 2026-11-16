@@ -21,7 +21,7 @@ Open `index.html` for the list of pages and the test flows.
 - Netlify: connect this repo; there is no build step (`netlify.toml` publishes the root).
 
 Every page subscribes to the per-user queues (`/user/queue/deliveries`, `/user/queue/chat`,
-`/user/queue/notifications`) and tells events apart by their `type`.
+`/user/queue/notifications`) and tells events apart by their `type`. Every message is `{ id, type, payload, timestamp }`.
 
 Each page connects to the realtime service URL you type (for example `https://<realtime host>` or
 `http://localhost:8090`) with a Racvest access token. The URL, tokens and IDs you type are only saved in

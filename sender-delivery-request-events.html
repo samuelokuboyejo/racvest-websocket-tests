@@ -198,7 +198,8 @@
 
     function route(body, channel) {
       if (!body || typeof body !== 'object') return;
-      const forWatched = body.deliveryId && body.deliveryId === watching;
+      const deliveryId = (body.payload || {}).deliveryId;
+      const forWatched = deliveryId && deliveryId === watching;
       switch (body.type) {
         case 'BID_PLACED': case 'BID_PRICE_UPDATED': case 'BID_CANCELLED':
           if (forWatched) onBid(body, channel);

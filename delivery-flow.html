@@ -162,7 +162,7 @@
 
     function eventDeliveryId(body) {
       const p = (body && body.payload) || {};
-      return body.deliveryId || p.deliveryId || (p.delivery && (p.delivery.deliveryId || p.delivery.id)) || null;
+      return p.deliveryId || (p.delivery && (p.delivery.deliveryId || p.delivery.id)) || null;
     }
 
     // ── Shared side behaviour ────────────────────────────────────────────────
@@ -489,7 +489,7 @@
 
       route(body, channel) {
         const group = SENDER_GROUPS[body.type] || 'sender';
-        if (group !== 'sender' && body.deliveryId !== this.watching) return;
+        if (group !== 'sender' && eventDeliveryId(body) !== this.watching) return;
         if (body.type === 'COURIER_LOCATION') this.onLocation(body.payload || {}, channel);
         else this.onEvent(body, channel, group);
       }

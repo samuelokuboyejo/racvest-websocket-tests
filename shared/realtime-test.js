@@ -366,10 +366,10 @@
         break;
     }
     if (!parts.length) {
-      const text = body.message || (body.notification && (body.notification.body || body.notification.title));
+      const text = p.message || (p.notification && (p.notification.body || p.notification.title));
       if (text) parts.push(escapeHtml(text));
     }
-    if (body.deliveryId) parts.push(`<span style="color:var(--text3)">delivery ${escapeHtml(String(body.deliveryId).slice(0, 8))}…</span>`);
+    if (p.deliveryId) parts.push(`<span style="color:var(--text3)">delivery ${escapeHtml(String(p.deliveryId).slice(0, 8))}…</span>`);
     const tone = GOOD.includes(type) ? 'good' : WARN.includes(type) ? 'warn' : BAD.includes(type) ? 'bad' : '';
     return { type, summary: parts.join(' · '), tone };
   }

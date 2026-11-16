@@ -159,7 +159,6 @@
         this.readIds = new Set();
         this.counts = { sent: 0, received: 0, frames: 0 };
         this.typingSent = false;
-        this.conversationTopic = null;
         this.frames = new RT.Feed(this.el.frames, { max: 60, emptyHtml: 'Nothing received yet.' });
         this.conn = new RT.Connection({
           onStatus: (state, text) => { this.el.pill.className = 'status-pill ' + (state || ''); this.el.pillText.textContent = text; },
@@ -195,15 +194,8 @@
         if (!RT.isUuid(this.myId)) { this.say(`Fill in the ${this.role}'s user ID first.`, true); return; }
         try {
           await this.conn.connect(RT.value('serverUrl'), this.el.token.value);
-          const on = (dest, fn) => this.conn.subscribe(dest, (body, ch) => { this.frame(body, ch); fn.call(this, body); });
-          on('/user/queue/messages', this.onMessage);
-          on('/user/queue/delivered', this.onDelivered);
-          on('/user/queue/read-receipt', this.onRead);
-          on('/user/queue/read-single', this.onRead);
-          on('/user/queue/typing', this.onTyping);
-          on('/user/queue/chat-unread-count', this.onUnread);
+          this.conn.subscribe(RT.QUEUES.chat, (event, channel) => this.onChatEvent(event, channel));
           this.setConnected(true);
-          if (RT.isUuid(RT.value('conversationId'))) this.followConversation(RT.value('conversationId'));
           this.say('Connected. Type a message below.');
         } catch (e) {
           this.say(e.message, true);
@@ -216,31 +208,37 @@
         this.el.disconnect.disabled = !on;
         this.el.text.disabled = !on;
         this.el.send.disabled = !on;
-        if (!on) this.conversationTopic = null;
-      }
-
-      followConversation(conversationId) {
-        if (!this.conn.connected || !RT.isUuid(conversationId) || this.conversationTopic === conversationId) return;
-        if (this.conversationTopic) {
-          ['messages', 'typing', 'read-receipt'].forEach((t) => this.conn.unsubscribe(`/topic/${t}/${this.conversationTopic}`));
-        }
-        this.conversationTopic = conversationId;
-        const on = (dest, fn) => this.conn.subscribe(dest, (body, ch) => { this.frame(body, ch); fn.call(this, body); });
-        on(`/topic/messages/${conversationId}`, this.onMessage);
-        on(`/topic/typing/${conversationId}`, this.onTyping);
-        on(`/topic/read-receipt/${conversationId}`, this.onRead);
       }
 
       // ── Incoming ─────────────────────────────────────────────────────────
-      frame(body, channel) {
+      onChatEvent(event, channel) {
+        if (!event || typeof event !== 'object') return;
+        const p = event.payload || {};
+        this.frame(event, p, channel);
+        switch (event.type) {
+          case 'MESSAGE': this.onMessage(p); break;
+          case 'DELIVERED': this.onDelivered(p); break;
+          case 'READ': this.onRead(p); break;
+          case 'TYPING': this.onTyping(p); break;
+          case 'UNREAD_COUNT': this.onUnread(p); break;
+          case 'CONVERSATION_CLOSED': this.say('The conversation was closed.'); break;
+          default: break;
+        }
+      }
+
+      frame(event, p, channel) {
         this.counts.frames++;
         this.el.frameCount.textContent = this.counts.frames;
-        let summary = '';
-        if (body && body.content != null && !channel.includes('typing')) summary = `<b>${RT.escapeHtml(body.content)}</b>`;
-        else if (body && body.messageIds) summary = `${body.messageIds.length} message(s) read`;
-        else if (body && body.unreadCount != null) summary = `unread count is now <b>${body.unreadCount}</b>`;
-        else if (channel.includes('typing')) summary = isStopped(body) ? 'stopped typing' : 'typing';
-        this.frames.add({ type: (body && body.type) || channel.split('/').pop(), channel, body, summary, tone: channel.includes('messages') ? 'good' : '' });
+        const summaries = {
+          MESSAGE: () => `<b>${RT.escapeHtml(p.content)}</b>`,
+          DELIVERED: () => 'delivered',
+          READ: () => `${(p.messageIds || []).length} message(s) read`,
+          TYPING: () => (p.typing ? 'typing' : 'stopped typing'),
+          UNREAD_COUNT: () => `unread count is now <b>${p.unreadCount}</b>`,
+          CONVERSATION_CLOSED: () => 'conversation closed',
+        };
+        const summary = summaries[event.type] ? summaries[event.type]() : '';
+        this.frames.add({ type: event.type, channel, body: event, summary, tone: event.type === 'MESSAGE' ? 'good' : '' });
       }
 
       onMessage(body) {
@@ -275,8 +273,8 @@
       }
 
       onTyping(body) {
-        if (!body || body.senderId === this.myId) return;
-        const stopped = isStopped(body);
+        if (!body || body.userId === this.myId) return;
+        const stopped = !body.typing;
         this.el.typing.textContent = stopped ? '' : `${ROLES[this.role].other} is typing…`;
         clearTimeout(this.otherTypingTimer);
         if (!stopped) this.otherTypingTimer = setTimeout(() => (this.el.typing.textContent = ''), 6000);
@@ -357,11 +355,7 @@
       }
     }
 
-    function isStopped(body) {
-      return !!body && (body.typing === false || body.content === 'false' || body.content === false);
-    }
-
-    // The conversation ID is shared: once either side learns it, both follow its topics.
+    // The conversation ID is shared: once either side learns it, typing uses it.
     function adoptConversation(conversationId) {
       if (!RT.isUuid(conversationId)) return;
       if (RT.value('conversationId') !== conversationId) {
@@ -369,7 +363,6 @@
         RT.store.set('conversationId', conversationId);
         RT.log('Conversation ' + conversationId + ' picked up from the first message.');
       }
-      Object.values(sides).forEach((side) => side.followConversation(conversationId));
     }
 
     const sides = {};

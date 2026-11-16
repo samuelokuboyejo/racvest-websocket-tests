@@ -37,11 +37,7 @@
           <label>Sender access token</label>
           <textarea id="token" data-save="senderToken" placeholder="Token from logging in as a sender"></textarea>
         </div>
-        <div class="field">
-          <label>Sender ID</label>
-          <input id="senderId" data-save="senderId" type="text" placeholder="user id of the sender in the token" />
-          <div class="hint">Answers go to /topic/nearby-couriers/{the token's user id}, so this must match the token.</div>
-        </div>
+        <div class="hint">Answers arrive on /user/queue/deliveries as NEARBY_COURIERS events for the user in the token.</div>
         <div class="btn-row">
           <button class="btn btn-primary" id="connectBtn">Connect</button>
           <button class="btn btn-danger" id="disconnectBtn" disabled>Disconnect</button>
@@ -221,14 +217,13 @@
     }
 
     document.getElementById('connectBtn').addEventListener('click', async () => {
-      const senderId = RT.value('senderId');
-      if (!RT.isUuid(senderId)) { RT.log('Enter the sender ID (a uuid).', true); return; }
       try {
         await conn.connect(RT.value('serverUrl'), RT.value('token'));
-        const topic = `/topic/nearby-couriers/${senderId}`;
-        conn.subscribe(topic, onNearby);
+        conn.subscribe(RT.QUEUES.deliveries, (body, channel) => {
+          if (body.type === 'NEARBY_COURIERS') onNearby(body.payload || {}, channel);
+        });
         setConnected(true);
-        RT.log(`Subscribed to ${topic}. Press Start.`);
+        RT.log(`Subscribed to ${RT.QUEUES.deliveries}. Press Start.`);
       } catch (e) {
         RT.log(e.message, true);
         setConnected(false);

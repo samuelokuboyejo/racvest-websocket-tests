@@ -184,11 +184,12 @@
       if (!RT.isUuid(deliveryId)) { RT.log('Enter the delivery ID (a uuid).', true); return; }
       try {
         await conn.connect(RT.value('serverUrl'), RT.value('token'));
-        const locationTopic = `/topic/delivery/${deliveryId}/courier-location`;
-        const trackingTopic = `/topic/delivery/${deliveryId}/tracking`;
-        conn.subscribe(locationTopic, onLocation);
-        conn.subscribe(trackingTopic, onTracking);
-        setConnected(true, [locationTopic, trackingTopic]);
+        conn.subscribe(RT.QUEUES.deliveries, (body, channel) => {
+          if (body.deliveryId !== deliveryId) return;
+          if (body.type === 'COURIER_LOCATION') onLocation(body.payload, channel);
+          else if (body.type === 'TRACKING_UPDATE') onTracking(body, channel);
+        });
+        setConnected(true, [`${RT.QUEUES.deliveries} · COURIER_LOCATION, TRACKING_UPDATE`]);
         RT.log('Tracking delivery ' + deliveryId);
       } catch (e) {
         RT.log(e.message, true);

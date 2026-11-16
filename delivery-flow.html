@@ -139,6 +139,11 @@
 
     // ── Shared delivery ID ───────────────────────────────────────────────────
     const watchedId = () => RT.value('deliveryId');
+    const SENDER_GROUPS = {
+      BID_PLACED: 'bids', BID_PRICE_UPDATED: 'bids', BID_CANCELLED: 'bids',
+      COURIER_VIEWING: 'viewers', BID_AUTO_ACCEPTED: 'auto-accept',
+      TRACKING_UPDATE: 'tracking', COURIER_LOCATION: 'tracking',
+    };
 
     function setDelivery(deliveryId, reason) {
       if (!RT.isUuid(deliveryId) || deliveryId === watchedId()) return;
@@ -292,13 +297,13 @@
             </div>
           </div>
           <div>
-            <div class="section-label">Courier events · /topic/courier/{id}</div>
+            <div class="section-label">Courier events · /user/queue/deliveries</div>
             <div class="feed" data-el="feed"></div>
           </div>`;
       }
 
       afterConnect() {
-        const topic = `/topic/courier/${this.myId}`;
+        const topic = RT.QUEUES.deliveries;
         this.conn.subscribe(topic, (body, ch) => this.onEvent(body, ch));
         this.say(`Listening on ${topic}. Sending heartbeats so the courier is available.`);
         this.startSending();
@@ -461,7 +466,7 @@
       }
 
       afterConnect() {
-        this.conn.subscribe(`/topic/sender/${this.myId}`, (body, ch) => this.onEvent(body, ch, 'sender'));
+        this.conn.subscribe(RT.QUEUES.deliveries, (body, ch) => this.route(body, ch));
         if (RT.isUuid(watchedId())) this.watch(watchedId());
         else this.say('Connected. Create a delivery request; it is watched as soon as the courier receives it.');
       }
@@ -472,9 +477,6 @@
 
       watch(deliveryId) {
         if (!this.conn.connected) return;
-        if (this.watching) {
-          ['bids', 'viewers', 'auto-accept', 'tracking', 'courier-location'].forEach((t) => this.conn.unsubscribe(`/topic/delivery/${this.watching}/${t}`));
-        }
         this.watching = deliveryId;
         this.bids = [];
         this.renderBids();
@@ -482,13 +484,14 @@
         this.el.viewers.textContent = '0';
         this.el.status.textContent = '—';
         this.el.eta.textContent = '—';
-        const base = `/topic/delivery/${deliveryId}`;
-        this.conn.subscribe(`${base}/bids`, (b, ch) => this.onEvent(b, ch, 'bids'));
-        this.conn.subscribe(`${base}/viewers`, (b, ch) => this.onEvent(b, ch, 'viewers'));
-        this.conn.subscribe(`${base}/auto-accept`, (b, ch) => this.onEvent(b, ch, 'auto-accept'));
-        this.conn.subscribe(`${base}/tracking`, (b, ch) => this.onEvent(b, ch, 'tracking'));
-        this.conn.subscribe(`${base}/courier-location`, (b, ch) => this.onLocation(b, ch));
         this.say('Watching delivery ' + deliveryId);
+      }
+
+      route(body, channel) {
+        const group = SENDER_GROUPS[body.type] || 'sender';
+        if (group !== 'sender' && body.deliveryId !== this.watching) return;
+        if (body.type === 'COURIER_LOCATION') this.onLocation(body.payload || {}, channel);
+        else this.onEvent(body, channel, group);
       }
 
       onEvent(body, channel, group) {

@@ -35,10 +35,6 @@
           <label>Courier access token</label>
           <textarea id="token" data-save="courierToken" placeholder="Token from logging in as a courier"></textarea>
         </div>
-        <div class="field">
-          <label>Courier ID</label>
-          <input id="courierId" data-save="courierId" type="text" placeholder="user id of the courier" />
-        </div>
         <div class="btn-row">
           <button class="btn btn-primary" id="connectBtn">Connect</button>
           <button class="btn btn-danger" id="disconnectBtn" disabled>Disconnect</button>
@@ -163,11 +159,9 @@
     }
 
     document.getElementById('connectBtn').addEventListener('click', async () => {
-      const courierId = RT.value('courierId');
-      if (!RT.isUuid(courierId)) { RT.log('Enter the courier ID (a uuid).', true); return; }
       try {
         await conn.connect(RT.value('serverUrl'), RT.value('token'));
-        const topic = `/topic/courier/${courierId}`;
+        const topic = RT.QUEUES.deliveries;
         conn.subscribe(topic, onEvent);
         setConnected(true, topic);
         RT.log(`Listening on ${topic}.`);

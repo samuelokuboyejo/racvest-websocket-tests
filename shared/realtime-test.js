@@ -25,6 +25,14 @@
   };
 
   // ── Saved settings (per browser, only on this machine) ────────────────────
+  const QUEUES = {
+    deliveries: '/user/queue/deliveries',
+    chat: '/user/queue/chat',
+    support: '/user/queue/support',
+    notifications: '/user/queue/notifications',
+    call: '/user/queue/call',
+  };
+
   const PREFIX = 'racvest-rt:';
   const store = {
     get(key) {
@@ -304,7 +312,7 @@
     if (!body || typeof body !== 'object') {
       return { type: 'MESSAGE', summary: escapeHtml(String(body)), tone: '' };
     }
-    const type = body.type || (body.latitude != null ? 'COURIER LOCATION' : 'MESSAGE');
+    const type = body.type || 'MESSAGE';
     const p = body.payload && typeof body.payload === 'object' ? body.payload : {};
     const b = (text) => `<b>${escapeHtml(text)}</b>`;
     const parts = [];
@@ -344,9 +352,15 @@
       case 'TRACKING_UPDATE':
         parts.push(`Status is now ${b(p.trackingStatus || '?')}`);
         break;
-      case 'COURIER LOCATION':
-        parts.push(`${b(Number(body.latitude).toFixed(5) + ', ' + Number(body.longitude).toFixed(5))}`);
-        if (body.etaText) parts.push(`ETA ${escapeHtml(body.etaText)}`);
+      case 'COURIER_LOCATION':
+        parts.push(`${b(Number(p.latitude).toFixed(5) + ', ' + Number(p.longitude).toFixed(5))}`);
+        if (p.etaText) parts.push(`ETA ${escapeHtml(p.etaText)}`);
+        break;
+      case 'NEARBY_COURIERS':
+        parts.push(`${b(String((p.couriers || []).length))} courier(s) nearby`);
+        break;
+      case 'BID_CANCELLED':
+        parts.push(`A ${escapeHtml((p.bidderType || 'bidder').toLowerCase())} withdrew their bid`);
         break;
       default:
         break;
@@ -405,7 +419,7 @@
   });
 
   window.RT = {
-    Connection, Feed, VEHICLES, store, setStatus, log, createMap, pinIcon, describeEvent,
+    Connection, Feed, QUEUES, VEHICLES, store, setStatus, log, createMap, pinIcon, describeEvent,
     distanceMeters, moveTowards, formatDistance, escapeHtml, pretty, time, money, value, isUuid,
   };
 })();

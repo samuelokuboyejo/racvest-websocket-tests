@@ -649,10 +649,6 @@
           <textarea id="jwtToken" data-save="courierToken" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."></textarea>
         </div>
 
-        <div class="field">
-          <label>Courier ID</label>
-          <input id="courierId" data-save="courierId" type="text" placeholder="uuid-of-the-courier" />
-        </div>
 
         <div class="field">
           <label>Courier Location (sent as a heartbeat every 10s)</label>
@@ -687,11 +683,10 @@
       <div>
         <div class="section-label">Testing Guide</div>
         <p style="font-family: var(--font-mono); font-size: 11px; color: var(--text2); line-height: 1.8;">
-          1. Fill in server URL + JWT token<br/>
-          2. Enter the Courier ID to monitor<br/>
-          3. Click <strong style="color:var(--accent)">Connect</strong> to subscribe<br/>
-          4. Use Postman to call <code style="color:#6699ff">POST /sender/deliveries</code><br/>
-          5. Watch live delivery broadcasts appear below ↓
+          1. Fill in server URL + a courier's JWT token<br/>
+          2. Click <strong style="color:var(--accent)">Connect</strong> to subscribe<br/>
+          3. Use Postman to call <code style="color:#6699ff">POST /sender/deliveries</code><br/>
+          4. Watch live delivery broadcasts appear below ↓
         </p>
       </div>
     </aside>
@@ -712,7 +707,7 @@
         <div class="empty-state" id="emptyState">
           <div class="empty-icon">🛵</div>
           <h3>Waiting for deliveries</h3>
-          <p>Connect with a Courier ID, then create a delivery request via Postman. If the courier is nearby, the broadcast will appear here in real time.</p>
+          <p>Connect as a courier, then create a delivery request via Postman. If the courier is nearby, the broadcast will appear here in real time.</p>
         </div>
       </div>
 
@@ -758,10 +753,8 @@
     function connect() {
       const serverUrl = document.getElementById('serverUrl').value.trim();
       const token = document.getElementById('jwtToken').value.trim();
-      const courierId = document.getElementById('courierId').value.trim();
-
-      if (!serverUrl || !token || !courierId) {
-        log('Please fill in server URL, JWT token, and courier ID.', true);
+      if (!serverUrl || !token) {
+        log('Please fill in the server URL and the JWT token.', true);
         return;
       }
 
@@ -782,7 +775,7 @@
             document.getElementById('disconnectBtn').disabled = false;
             document.getElementById('liveBadge').style.display = 'flex';
 
-            const topic = `/topic/courier/${courierId}`;
+            const topic = RT.QUEUES.deliveries;
             document.getElementById('subscribeLabel').textContent = `Subscribed → ${topic}`;
             log(`Subscribed to ${topic}, sending location every 10s`);
 
@@ -965,7 +958,7 @@
         <div class="empty-state" id="emptyState">
           <div class="empty-icon">🛵</div>
           <h3>Waiting for deliveries</h3>
-          <p>Connect with a Courier ID, then create a delivery request via Postman. If the courier is nearby, the broadcast will appear here in real time.</p>
+          <p>Connect as a courier, then create a delivery request via Postman. If the courier is nearby, the broadcast will appear here in real time.</p>
         </div>`;
       deliveryCount = 0;
       highPriorityCount = 0;

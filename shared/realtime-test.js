@@ -301,11 +301,11 @@
   // ── Human summary of a racvest DeliveryEvent ({ type, deliveryId, payload, message }) ──
   const GOOD = ['BID_ACCEPTED', 'BID_AUTO_ACCEPTED', 'PAYMENT_SUCCESSFUL', 'PAYMENT_CONFIRMED', 'PAYMENT_HELD',
     'PAYMENT_COMPLETED', 'PAYMENT_RECEIVED', 'COMPLETED', 'SUBMISSION_ACCEPTED', 'COURIER_INVITE_ACCEPTED',
-    'MATCHED_DELIVERY_OFFER', 'DELIVERY_LIVE', 'JOB_RESERVED', 'RESERVED_JOB_ACTIVATED'];
+    'DELIVERY_LIVE', 'JOB_RESERVED', 'RESERVED_JOB_ACTIVATED'];
   const WARN = ['BID_PRICE_UPDATED', 'SENDER_PRICE_UPDATED', 'COUNTER_OFFER_SENT', 'PAYMENT_REQUIRED',
     'SCHEDULED_DELIVERY_MORNING', 'SCHEDULED_DELIVERY_ONE_HOUR'];
   const BAD = ['CANCELLED_BY_SENDER', 'CANCELLED_BY_COURIER', 'BID_CANCELLED', 'PAYMENT_REFUNDED',
-    'MATCHING_EXHAUSTED', 'SUBMISSION_REJECTED', 'TRIP_CANCELLED', 'DELIVERY_EXPIRED', 'COURIER_NO_SHOW_EXPIRY',
+    'SUBMISSION_REJECTED', 'TRIP_CANCELLED', 'DELIVERY_EXPIRED', 'COURIER_NO_SHOW_EXPIRY',
     'SENDER_COURIER_NO_SHOW'];
 
   function describeEvent(body) {
@@ -326,12 +326,6 @@
         if (p.highPriority) parts.push('⚡ high priority');
         break;
       }
-      case 'MATCHED_DELIVERY_OFFER':
-        parts.push(`Auto-matched offer ${b(money(p.offeredPrice))}`);
-        if (p.pickupAddress) parts.push(`from ${b(p.pickupAddress)}`);
-        if (p.dropoffAddress) parts.push(`to ${b(p.dropoffAddress)}`);
-        if (p.offerExpirySeconds) parts.push(`answer within ${p.offerExpirySeconds}s`);
-        break;
       case 'BID_PLACED': {
         const bid = p.bid || p;
         parts.push(`${b(bid.name || 'Someone')} bid ${b(money(bid.offeredPrice))}`);

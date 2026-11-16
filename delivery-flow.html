@@ -317,7 +317,7 @@
       onEvent(body, channel) {
         const info = this.record(body, channel);
         const deliveryId = eventDeliveryId(body);
-        if (info.type === 'DELIVERY_LIVE' || info.type === 'MATCHED_DELIVERY_OFFER') {
+        if (info.type === 'DELIVERY_LIVE') {
           this.counts.requests++;
           this.el.requests.textContent = this.counts.requests;
           // Follow the newest request until the current one has a bid, so an old saved ID never gets in the way.

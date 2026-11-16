@@ -56,12 +56,12 @@
           <a class="card page-card" href="delivery-flow.html">
             <span class="who">Courier left · sender right</span><h3>Delivery flow</h3>
             <p>One delivery from request to drop-off. The courier sends heartbeats and gets the request; the sender sees bids, viewers and tracking, and watches the courier drive on a map. A progress bar ticks off each step.</p>
-            <code>/topic/courier/{id} · /topic/sender/{id} · /topic/delivery/{id}/…</code>
+            <code>/user/queue/deliveries</code>
           </a>
           <a class="card page-card" href="chat.html">
             <span class="who">Courier left · sender right</span><h3>Chat</h3>
             <p>Type on either side and watch the message land on the other. Shows delivered and read ticks, typing and unread counts.</p>
-            <code>/app/send-message · /app/typing · /user/queue/messages · /topic/messages/{conversationId}</code>
+            <code>/app/send-message · /app/typing · /user/queue/chat</code>
           </a>
         </div>
       </div>
@@ -72,12 +72,12 @@
           <a class="card page-card" href="courier-new-delivery-requests.html">
             <span class="who">Courier</span><h3>New delivery requests</h3>
             <p>The original broadcast monitor. Shows each new request (DELIVERY_LIVE) as a card, and sends a heartbeat so the courier stays available.</p>
-            <code>/topic/courier/{courierId}</code>
+            <code>/user/queue/deliveries · DELIVERY_LIVE</code>
           </a>
           <a class="card page-card" href="courier-all-events.html">
             <span class="who">Courier</span><h3>All courier events</h3>
             <p>Every event sent to a courier: new requests, auto-matched offers, accepted bids, price changes. Filter by type.</p>
-            <code>/topic/courier/{courierId}</code>
+            <code>/user/queue/deliveries</code>
           </a>
           <a class="card page-card" href="courier-publish-location.html">
             <span class="who">Courier</span><h3>Publish location</h3>
@@ -92,18 +92,18 @@
         <div class="grid" style="margin-top:10px">
           <a class="card page-card sender" href="sender-delivery-request-events.html">
             <span class="who">Sender</span><h3>Delivery request events</h3>
-            <p>After creating a request: bids coming in, couriers viewing it, auto-accept, tracking status, plus payments and price changes on the sender topic.</p>
-            <code>/topic/sender/{id} · /topic/delivery/{id}/bids · viewers · auto-accept · tracking</code>
+            <p>After creating a request: bids coming in, couriers viewing it, auto-accept, tracking status, plus payments and price changes.</p>
+            <code>/user/queue/deliveries</code>
           </a>
           <a class="card page-card sender" href="sender-track-delivery.html">
             <span class="who">Sender</span><h3>Track delivery</h3>
             <p>A map of the courier moving on an assigned delivery, with ETA, distance left and the status timeline.</p>
-            <code>/topic/delivery/{id}/courier-location · /topic/delivery/{id}/tracking</code>
+            <code>/user/queue/deliveries · COURIER_LOCATION · TRACKING_UPDATE</code>
           </a>
           <a class="card page-card sender" href="sender-nearby-couriers.html">
             <span class="who">Sender</span><h3>Nearby couriers</h3>
             <p>The sender sends their location every few seconds and gets the couriers within 5 km back as map pins.</p>
-            <code>/app/location/sender-view → /topic/nearby-couriers/{senderId}</code>
+            <code>/app/location/sender-view → /user/queue/deliveries · NEARBY_COURIERS</code>
           </a>
         </div>
       </div>

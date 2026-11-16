@@ -124,22 +124,23 @@
         : '<div class="feed-empty">Nothing yet. Connect, then trigger a notification.</div>';
     }
 
-    function onPush(body, channel) {
-      const type = body && body.type;
+    function onPush(event, channel) {
+      const type = event && event.type;
+      const body = (event && event.payload) || {};
       if (counts[type] != null) counts[type]++;
       document.getElementById('newCount').textContent = counts.NEW_NOTIFICATION;
       document.getElementById('announcementCount').textContent = counts.ANNOUNCEMENT;
       document.getElementById('countUpdates').textContent = counts.UNREAD_COUNT;
-      if (body && body.unreadCount != null) setBadge(body.unreadCount);
-      if (body && body.notification) {
+      if (body.unreadCount != null) setBadge(body.unreadCount);
+      if (body.notification) {
         inbox.unshift({ ...body.notification, announcement: type === 'ANNOUNCEMENT' });
         renderInbox();
       }
-      const n = (body && body.notification) || {};
+      const n = body.notification || {};
       const summary = type === 'UNREAD_COUNT'
         ? `Badge is now <b>${body.unreadCount}</b>`
         : `<b>${RT.escapeHtml(n.title || '')}</b> ${RT.escapeHtml(n.message || '')}${body.unreadCount != null ? ` · unread ${body.unreadCount}` : ' · refetch the inbox'}`;
-      feed.add({ type: type || 'MESSAGE', channel, body, summary, tone: type === 'ANNOUNCEMENT' ? 'warn' : type === 'NEW_NOTIFICATION' ? 'good' : '' });
+      feed.add({ type: type || 'MESSAGE', channel, body: event, summary, tone: type === 'ANNOUNCEMENT' ? 'warn' : type === 'NEW_NOTIFICATION' ? 'good' : '' });
       RT.log(`${type} received.`);
     }
 

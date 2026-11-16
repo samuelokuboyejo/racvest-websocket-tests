@@ -35,10 +35,6 @@
           <label>Sender access token</label>
           <textarea id="token" data-save="senderToken" placeholder="Token from logging in as a sender"></textarea>
         </div>
-        <div class="field">
-          <label>Sender ID</label>
-          <input id="senderId" data-save="senderId" type="text" placeholder="user id of the sender" />
-        </div>
         <div class="btn-row">
           <button class="btn btn-primary" id="connectBtn">Connect</button>
           <button class="btn btn-danger" id="disconnectBtn" disabled>Disconnect</button>
@@ -63,11 +59,12 @@
       </div>
 
       <div class="help">
-        <strong>/topic/sender/{id}</strong> payments, bid price changes, traveller answers<br/>
-        <strong>…/bids</strong> new bids (BID_PLACED)<br/>
-        <strong>…/viewers</strong> couriers looking at the request<br/>
-        <strong>…/auto-accept</strong> a bid accepted for you<br/>
-        <strong>…/tracking</strong> status after a courier is assigned
+        Everything arrives on <strong>/user/queue/deliveries</strong>, grouped here by type:<br/>
+        <strong>bids</strong> BID_PLACED, BID_PRICE_UPDATED, BID_CANCELLED<br/>
+        <strong>viewers</strong> COURIER_VIEWING<br/>
+        <strong>auto-accept</strong> BID_AUTO_ACCEPTED<br/>
+        <strong>tracking</strong> TRACKING_UPDATE<br/>
+        <strong>sender</strong> everything else: payments, traveller answers…
       </div>
       <button class="btn btn-small" id="clearSaved" style="align-self:flex-start">Clear saved settings</button>
     </aside>
@@ -190,20 +187,35 @@
     function watchDelivery() {
       const deliveryId = RT.value('deliveryId');
       if (!RT.isUuid(deliveryId)) { RT.log('Enter the delivery ID (a uuid).', true); return; }
-      if (watching) {
-        ['bids', 'viewers', 'auto-accept', 'tracking'].forEach((s) => conn.unsubscribe(`/topic/delivery/${watching}/${s}`));
-      }
       watching = deliveryId;
       bids = [];
       renderBids();
       document.getElementById('viewerCount').textContent = 0;
       document.getElementById('trackingStatus').textContent = '—';
-      conn.subscribe(`/topic/delivery/${deliveryId}/bids`, onBid);
-      conn.subscribe(`/topic/delivery/${deliveryId}/viewers`, onViewers);
-      conn.subscribe(`/topic/delivery/${deliveryId}/auto-accept`, (body, ch) => record('auto-accept', body, ch));
-      conn.subscribe(`/topic/delivery/${deliveryId}/tracking`, onTracking);
       renderSubs();
       RT.log('Watching delivery ' + deliveryId);
+    }
+
+    function route(body, channel) {
+      if (!body || typeof body !== 'object') return;
+      const deliveryId = (body.payload || {}).deliveryId;
+      const forWatched = deliveryId && deliveryId === watching;
+      switch (body.type) {
+        case 'BID_PLACED': case 'BID_PRICE_UPDATED': case 'BID_CANCELLED':
+          if (forWatched) onBid(body, channel);
+          break;
+        case 'COURIER_VIEWING':
+          if (forWatched) onViewers(body, channel);
+          break;
+        case 'BID_AUTO_ACCEPTED':
+          record('auto-accept', body, channel);
+          break;
+        case 'TRACKING_UPDATE':
+          if (forWatched) onTracking(body, channel);
+          break;
+        default:
+          record('sender', body, channel);
+      }
     }
 
     function renderSubs() {
@@ -222,11 +234,9 @@
     }
 
     document.getElementById('connectBtn').addEventListener('click', async () => {
-      const senderId = RT.value('senderId');
-      if (!RT.isUuid(senderId)) { RT.log('Enter the sender ID (a uuid).', true); return; }
       try {
         await conn.connect(RT.value('serverUrl'), RT.value('token'));
-        conn.subscribe(`/topic/sender/${senderId}`, (body, ch) => record('sender', body, ch));
+        conn.subscribe(RT.QUEUES.deliveries, route);
         setConnected(true);
         if (RT.isUuid(RT.value('deliveryId'))) watchDelivery();
         else RT.log('Connected. Paste a delivery ID and press Watch.');
